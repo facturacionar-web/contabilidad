@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useTable, insertRow, updateRow, deleteRow, paisFilter } from "@/lib/useSupabaseData";
 import type { Contacto, ContactoTipo } from "@/lib/types";
 import { useConfig } from "@/lib/useConfig";
-import { COUNTRIES, CountryCode } from "@/lib/countries";
+import { COUNTRIES } from "@/lib/countries";
 import PageHeader from "@/components/PageHeader";
 import Modal from "@/components/Modal";
 import EmptyState from "@/components/EmptyState";
@@ -16,7 +16,6 @@ type FormState = {
   email: string;
   telefono: string;
   direccion: string;
-  pais: CountryCode | "";
   notas: string;
 };
 
@@ -27,12 +26,11 @@ const BLANK: FormState = {
   email: "",
   telefono: "",
   direccion: "",
-  pais: "",
   notas: "",
 };
 
 export default function ContactosPage() {
-  const { config, country } = useConfig();
+  const { config } = useConfig();
   const pais = config?.pais;
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Contacto | null>(null);
@@ -69,7 +67,7 @@ export default function ContactosPage() {
 
   function openNew() {
     setEditing(null);
-    setForm({ ...BLANK, pais: country.code });
+    setForm(BLANK);
     setOpen(true);
   }
 
@@ -82,7 +80,6 @@ export default function ContactosPage() {
       email: c.email ?? "",
       telefono: c.telefono ?? "",
       direccion: c.direccion ?? "",
-      pais: c.pais ?? "",
       notas: c.notas ?? "",
     });
     setOpen(true);
@@ -101,7 +98,6 @@ export default function ContactosPage() {
         email: form.email || null,
         telefono: form.telefono || null,
         direccion: form.direccion || null,
-        pais: (form.pais || null) as CountryCode | null,
         notas: form.notas || null,
       };
       if (editing) {
@@ -257,34 +253,17 @@ export default function ContactosPage() {
 
       <Modal open={open} onClose={() => setOpen(false)} title={editing ? "Editar contacto" : "Nuevo contacto"}>
         <form onSubmit={save} className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="label">Tipo *</label>
-              <select
-                className="select"
-                value={form.tipo}
-                onChange={(e) => setForm({ ...form, tipo: e.target.value as ContactoTipo })}
-              >
-                <option value="cliente">Cliente</option>
-                <option value="proveedor">Proveedor</option>
-                <option value="ambos">Ambos</option>
-              </select>
-            </div>
-            <div>
-              <label className="label">País</label>
-              <select
-                className="select"
-                value={form.pais}
-                onChange={(e) => setForm({ ...form, pais: e.target.value as CountryCode | "" })}
-              >
-                <option value="">—</option>
-                {Object.values(COUNTRIES).map((c) => (
-                  <option key={c.code} value={c.code}>
-                    {c.flag} {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div>
+            <label className="label">Tipo *</label>
+            <select
+              className="select"
+              value={form.tipo}
+              onChange={(e) => setForm({ ...form, tipo: e.target.value as ContactoTipo })}
+            >
+              <option value="cliente">Cliente</option>
+              <option value="proveedor">Proveedor</option>
+              <option value="ambos">Ambos</option>
+            </select>
           </div>
 
           <div>
@@ -299,13 +278,11 @@ export default function ContactosPage() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="label">
-                {form.pais ? COUNTRIES[form.pais].taxIdLabel : "Identificación"}
-              </label>
+              <label className="label">Identificación fiscal</label>
               <div className="flex gap-2 items-end">
                 <input
                   className="input flex-1"
-                  placeholder={form.pais ? COUNTRIES[form.pais].taxIdPlaceholder : ""}
+                  placeholder="CUIT, RFC, RUT…"
                   value={form.tax_id}
                   onChange={(e) => setForm({ ...form, tax_id: e.target.value })}
                 />

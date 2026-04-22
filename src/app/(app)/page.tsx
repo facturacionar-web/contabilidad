@@ -86,7 +86,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
         <RecentList
           title="Últimos ingresos"
-          href="/ingresos"
+          href="/ingresos/pagos-recibidos"
           empty="Aún no hay ingresos registrados este mes."
           rows={recentIngresos.map((i) => ({
             id: i.id, label: i.concepto, sublabel: i.categoria,
@@ -96,7 +96,7 @@ export default function Dashboard() {
         />
         <RecentList
           title="Últimos gastos"
-          href="/gastos"
+          href="/egresos/facturas"
           empty="Aún no hay gastos registrados este mes."
           rows={recentGastos.map((g) => ({
             id: g.id, label: g.concepto,
@@ -113,10 +113,10 @@ export default function Dashboard() {
           icon={<FileMinus className="w-5 h-5" />}
           label="Notas de crédito (mes)"
           value={notasMes.length}
-          href="/notas-credito"
+          href="/ingresos/notas-credito"
           extra={sumNotas > 0 ? formatMoney(sumNotas, base, country.locale) : undefined}
         />
-        <StatCard icon={<TrendingDown className="w-5 h-5" />} label="Facturas pendientes" value={pendientes.length} href="/gastos" />
+        <StatCard icon={<TrendingDown className="w-5 h-5" />} label="Facturas pendientes" value={pendientes.length} href="/egresos/facturas" />
       </div>
     </>
   );

@@ -28,6 +28,8 @@ export interface Ingreso {
   contacto_id?: number | null;
   concepto: string;
   categoria: string;
+  concepto_id?: string | null;
+  cuenta_id?: string | null;
   monto: number;
   moneda: CurrencyCode;
   metodo_pago: string;
@@ -50,6 +52,8 @@ export interface Gasto {
   numero_factura?: string | null;
   concepto: string;
   categoria: string;
+  concepto_id?: string | null;
+  cuenta_id?: string | null;
   subtotal: number;
   iva: number;
   iva_monto: number;
@@ -78,6 +82,31 @@ export interface NotaCredito {
   moneda: CurrencyCode;
   motivo: string;
   notas?: string | null;
+  created_at?: string;
+}
+
+export type ConceptoTipo = "ingreso" | "egreso" | "ambos";
+
+export interface Concepto {
+  id: string; // uuid
+  user_id?: string;
+  ctx_pais?: string | null;
+  nombre: string;
+  tipo: ConceptoTipo;
+  descripcion?: string | null;
+  created_at?: string;
+}
+
+export type CuentaTipo = "banco" | "billetera" | "efectivo" | "otro";
+
+export interface Cuenta {
+  id: string; // uuid
+  user_id?: string;
+  ctx_pais?: string | null;
+  nombre: string;
+  tipo: CuentaTipo;
+  moneda: CurrencyCode;
+  descripcion?: string | null;
   created_at?: string;
 }
 

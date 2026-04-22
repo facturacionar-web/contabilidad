@@ -6,6 +6,8 @@ import type {
   Ingreso,
   Gasto,
   NotaCredito,
+  Concepto,
+  Cuenta,
 } from "./types";
 
 type TableMap = {
@@ -13,6 +15,8 @@ type TableMap = {
   ingresos: Ingreso;
   gastos: Gasto;
   notas_credito: NotaCredito;
+  conceptos: Concepto;
+  cuentas: Cuenta;
 };
 
 export function useTable<K extends keyof TableMap>(
@@ -78,7 +82,7 @@ export async function insertRow<K extends keyof TableMap>(
 
 export async function updateRow<K extends keyof TableMap>(
   table: K,
-  id: number,
+  id: number | string,
   patch: Partial<TableMap[K]>
 ) {
   const supabase = createClient();
@@ -91,7 +95,7 @@ export async function updateRow<K extends keyof TableMap>(
 
 export async function deleteRow<K extends keyof TableMap>(
   table: K,
-  id: number
+  id: number | string
 ) {
   const supabase = createClient();
   const { error } = await supabase.from(table).delete().eq("id", id);

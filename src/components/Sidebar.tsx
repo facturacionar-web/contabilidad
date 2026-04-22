@@ -1,60 +1,183 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState, useEffect } from "react";
 import {
   LayoutDashboard,
   Users,
   TrendingUp,
   TrendingDown,
-  FileMinus,
   BarChart3,
   Settings,
   Wallet,
+  ChevronDown,
+  Layers,
+  Building2,
+  Receipt,
+  CreditCard,
+  FileMinus,
+  ArrowDownCircle,
 } from "lucide-react";
 
-const nav = [
+type SubItem = { href: string; label: string };
+type NavGroup = {
+  key: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  children: SubItem[];
+};
+type NavLink = {
+  href: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+};
+
+const nav: (NavLink | NavGroup)[] = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/contactos", label: "Contactos", icon: Users },
-  { href: "/ingresos", label: "Ingresos", icon: TrendingUp },
-  { href: "/gastos", label: "Gastos y Facturas", icon: TrendingDown },
-  { href: "/notas-credito", label: "Notas de crédito", icon: FileMinus },
+  {
+    key: "ingresos",
+    label: "Ingresos",
+    icon: TrendingUp,
+    children: [
+      { href: "/ingresos/pagos-recibidos", label: "Pagos recibidos" },
+      { href: "/ingresos/notas-credito", label: "Notas de crédito" },
+    ],
+  },
+  {
+    key: "egresos",
+    label: "Egresos",
+    icon: TrendingDown,
+    children: [
+      { href: "/egresos/facturas", label: "Facturas" },
+      { href: "/egresos/pagos", label: "Pagos" },
+    ],
+  },
+  { href: "/conceptos", label: "Conceptos", icon: Layers },
+  { href: "/cuentas", label: "Cuentas", icon: Building2 },
   { href: "/reportes", label: "Reportes", icon: BarChart3 },
   { href: "/configuracion", label: "Configuración", icon: Settings },
 ];
 
+function isGroup(item: NavLink | NavGroup): item is NavGroup {
+  return "children" in item;
+}
+
 export default function Sidebar() {
   const pathname = usePathname();
+
+  // Auto-expand groups based on current path
+  const initialOpen: Record<string, boolean> = {};
+  for (const item of nav) {
+    if (isGroup(item)) {
+      initialOpen[item.key] = item.children.some((c) =>
+        pathname.startsWith(c.href)
+      );
+    }
+  }
+  const [open, setOpen] = useState<Record<string, boolean>>(initialOpen);
+
+  // Re-evaluate when pathname changes
+  useEffect(() => {
+    setOpen((prev) => {
+      const next = { ...prev };
+      for (const item of nav) {
+        if (isGroup(item)) {
+          if (item.children.some((c) => pathname.startsWith(c.href))) {
+            next[item.key] = true;
+          }
+        }
+      }
+      return next;
+    });
+  }, [pathname]);
+
+  const toggle = (key: string) =>
+    setOpen((prev) => ({ ...prev, [key]: !prev[key] }));
+
+  const linkClass = (active: boolean) =>
+    `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+      active
+        ? "bg-[var(--primary-soft)] text-[var(--primary-hover)]"
+        : "text-slate-600 hover:bg-slate-100"
+    }`;
+
   return (
     <aside className="w-64 bg-white border-r border-[var(--border)] flex flex-col fixed inset-y-0 left-0">
       <div className="h-16 px-6 flex items-center border-b border-[var(--border)] gap-2">
         <Wallet className="w-6 h-6 text-[var(--primary)]" />
         <span className="font-semibold text-lg">Contabilidad</span>
       </div>
-      <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+
+      <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
         {nav.map((item) => {
+          if (!isGroup(item)) {
+            const active =
+              item.href === "/"
+                ? pathname === "/"
+                : pathname.startsWith(item.href);
+            const Icon = item.icon;
+            return (
+              <Link key={item.href} href={item.href} className={linkClass(active)}>
+                <Icon className="w-4 h-4 shrink-0" />
+                {item.label}
+              </Link>
+            );
+          }
+
+          // Dropdown group
           const Icon = item.icon;
-          const active =
-            item.href === "/"
-              ? pathname === "/"
-              : pathname.startsWith(item.href);
+          const isOpen = open[item.key];
+          const groupActive = item.children.some((c) =>
+            pathname.startsWith(c.href)
+          );
+
           return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                active
-                  ? "bg-[var(--primary-soft)] text-[var(--primary-hover)]"
-                  : "text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              <Icon className="w-4 h-4" />
-              {item.label}
-            </Link>
+            <div key={item.key}>
+              <button
+                onClick={() => toggle(item.key)}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  groupActive
+                    ? "text-[var(--primary-hover)]"
+                    : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                <Icon className="w-4 h-4 shrink-0" />
+                <span className="flex-1 text-left">{item.label}</span>
+                <ChevronDown
+                  className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                    isOpen ? "rotate-180" : ""
+                  }`}
+                />
+              </button>
+
+              {isOpen && (
+                <div className="ml-4 mt-0.5 pl-3 border-l border-[var(--border)] space-y-0.5">
+                  {item.children.map((child) => {
+                    const childActive = pathname.startsWith(child.href);
+                    return (
+                      <Link
+                        key={child.href}
+                        href={child.href}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                          childActive
+                            ? "bg-[var(--primary-soft)] text-[var(--primary-hover)] font-medium"
+                            : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                        }`}
+                      >
+                        {child.label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           );
         })}
       </nav>
+
       <div className="p-4 border-t border-[var(--border)] text-xs text-[var(--muted)]">
-        v1.0 · Datos locales
+        v1.1 · Contabilidad
       </div>
     </aside>
   );

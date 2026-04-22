@@ -82,6 +82,12 @@ export const INCOME_CATEGORIES = [
   "Otros ingresos",
 ] as const;
 
+/** Monedas disponibles para un país: local + USD + EUR */
+export function monedasDisponibles(pais: CountryCode): CurrencyCode[] {
+  const local = COUNTRIES[pais].currency;
+  return [local, ...["USD", "EUR"].filter((c) => c !== local)] as CurrencyCode[];
+}
+
 export const EXPENSE_CATEGORIES = [
   "Compras",
   "Servicios",
