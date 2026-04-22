@@ -197,13 +197,23 @@ export default function ContactoDashboardPage({
       </div>
 
       <div className="card p-0 overflow-hidden">
-        <div className="border-b border-[var(--border)] flex">
-          <TabButton active={tab === "facturas"} onClick={() => setTab("facturas")}>
-            Facturas ({facturas.length})
-          </TabButton>
-          <TabButton active={tab === "pagos"} onClick={() => setTab("pagos")}>
-            Pagos ({pagos.length})
-          </TabButton>
+        <div className="border-b border-[var(--border)] flex items-center justify-between pr-4">
+          <div className="flex">
+            <TabButton active={tab === "facturas"} onClick={() => setTab("facturas")}>
+              Facturas ({facturas.length})
+            </TabButton>
+            <TabButton active={tab === "pagos"} onClick={() => setTab("pagos")}>
+              Pagos ({pagos.length})
+            </TabButton>
+          </div>
+          {tab === "pagos" && (
+            <Link
+              href={`/egresos/pagos?nuevo=1&proveedor=${contactoId}`}
+              className="btn btn-primary btn-sm text-xs py-1.5 px-3"
+            >
+              <Plus className="w-3.5 h-3.5" /> Nuevo pago
+            </Link>
+          )}
         </div>
 
         {tab === "facturas" ? (
@@ -289,51 +299,61 @@ export default function ContactoDashboardPage({
           <EmptyState
             icon={<CreditCard className="w-6 h-6" />}
             title="Sin pagos"
-            description="No hay pagos directos registrados para este proveedor."
+            description="No hay pagos registrados para este proveedor."
+            action={
+              <Link href={`/egresos/pagos?nuevo=1&proveedor=${contactoId}`} className="btn btn-primary">
+                <Plus className="w-4 h-4" /> Nuevo pago
+              </Link>
+            }
           />
         ) : (
           <table className="table">
             <thead>
               <tr>
                 <th>Fecha</th>
-                <th>Descripción</th>
+                <th>Facturas pagadas</th>
                 <th>Método</th>
-                <th className="text-right">Monto</th>
+                <th className="text-right">Monto transferido</th>
                 <th className="text-right">Acciones</th>
               </tr>
             </thead>
             <tbody>
-              {pagos.map((g) => (
-                <tr key={g.id}>
-                  <td className="whitespace-nowrap">
-                    {formatDate(g.fecha, country.locale)}
-                  </td>
-                  <td className="font-medium max-w-xs truncate">
-                    {g.concepto}
-                  </td>
-                  <td className="text-[var(--muted)]">
-                    {g.metodo_pago ?? "—"}
-                  </td>
-                  <td className="text-right font-semibold text-red-600 whitespace-nowrap">
-                    -{formatMoney(Number(g.total), g.moneda, country.locale)}
-                  </td>
-                  <td className="text-right whitespace-nowrap">
-                    <Link
-                      className="btn btn-ghost p-1.5"
-                      href={`/egresos/pagos`}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </Link>
-                    <button
-                      className="btn btn-ghost p-1.5 text-red-600"
-                      onClick={() => removeGasto(g)}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {pagos.map((g) => {
+                const fps = g.factura_pagos ?? [];
+                return (
+                  <tr key={g.id}>
+                    <td className="whitespace-nowrap">{formatDate(g.fecha, country.locale)}</td>
+                    <td className="max-w-xs">
+                      {fps.length > 0 ? (
+                        <div className="space-y-0.5">
+                          {fps.map((fp, i) => (
+                            <div key={i} className="text-sm">
+                              <span className="font-medium">{fp.numero_factura ?? `#${fp.factura_id}`}</span>
+                              <span className="text-[var(--muted)] ml-2">{formatMoney(fp.monto, g.moneda, country.locale)}</span>
+                              {fp.retenciones?.length > 0 && (
+                                <span className="text-xs text-amber-600 ml-2">
+                                  (ret: {fp.retenciones.map(r => `${r.tipo} ${formatMoney(r.monto, g.moneda, country.locale)}`).join(", ")})
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-[var(--muted)]">{g.concepto}</span>
+                      )}
+                    </td>
+                    <td className="text-[var(--muted)]">{g.metodo_pago ?? "—"}</td>
+                    <td className="text-right font-semibold text-red-600 whitespace-nowrap">
+                      -{formatMoney(Number(g.total), g.moneda, country.locale)}
+                    </td>
+                    <td className="text-right whitespace-nowrap">
+                      <button className="btn btn-ghost p-1.5 text-red-600" onClick={() => removeGasto(g)}>
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

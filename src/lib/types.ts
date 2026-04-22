@@ -54,6 +54,20 @@ export interface FacturaItem {
   total: number;
 }
 
+export interface Retencion {
+  tipo: string;
+  monto: number;
+}
+
+export interface FacturaPago {
+  factura_id: number;
+  numero_factura: string | null;
+  total_factura: number;
+  monto_pagado_antes: number;
+  monto: number;
+  retenciones: Retencion[];
+}
+
 export interface Gasto {
   id: number;
   user_id?: string;
@@ -77,6 +91,8 @@ export interface Gasto {
   monto_pagado: number;
   notas?: string | null;
   items?: FacturaItem[] | null;
+  factura_pagos?: FacturaPago[] | null;
+  tasa_cambio?: number | null;
   created_at?: string;
 }
 
