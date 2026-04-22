@@ -123,15 +123,25 @@ export default function ContactosPage() {
     if (cuit.length < 10) return;
     setCuitLoading(true);
     try {
-      const res = await fetch(`/api/cuit?cuit=${cuit}`);
+      // Llamada directa desde el browser (IP del usuario = IP argentina, no bloqueada por AFIP)
+      const res = await fetch(
+        `https://afip.tangofactura.com/Rest/GetContribuyenteByCuit?Cuit=${cuit}`,
+        { headers: { Accept: "application/json" } }
+      );
       const data = await res.json();
-      if (data.razon_social) {
-        setForm((f) => ({ ...f, nombre: data.razon_social }));
+      const c = data?.Contribuyente ?? data?.contribuyente;
+      const razon =
+        c?.RazonSocial ||
+        c?.razonSocial ||
+        (c?.Apellido ? `${c.Apellido}${c.Nombre ? ", " + c.Nombre : ""}`.trim() : null) ||
+        (c?.apellido ? `${c.apellido}${c.nombre ? ", " + c.nombre : ""}`.trim() : null);
+      if (razon) {
+        setForm((f) => ({ ...f, nombre: razon }));
       } else {
-        alert(`CUIT no encontrado en AFIP: ${data.error ?? "sin resultado"}`);
+        alert("CUIT no encontrado en el padrón AFIP.");
       }
-    } catch (err) {
-      alert("Error al consultar AFIP: " + (err as Error).message);
+    } catch {
+      alert("No se pudo conectar con AFIP. Verificá tu conexión a internet.");
     } finally {
       setCuitLoading(false);
     }
