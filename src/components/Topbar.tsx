@@ -7,7 +7,7 @@ import { LogOut, ChevronDown, Check } from "lucide-react";
 const PAISES_APP = ["MX", "AR", "CL"] as const;
 
 export default function Topbar({ userEmail }: { userEmail: string }) {
-  const { config, allConfigs, country, reload } = useConfig();
+  const { config, allConfigs, country } = useConfig();
   const [open, setOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -23,7 +23,6 @@ export default function Topbar({ userEmail }: { userEmail: string }) {
 
   async function switchPais(pais: string) {
     if (pais === config?.pais || switching) return;
-    // Si no existe config para ese país, crear una vacía primero
     const existe = allConfigs.some((c) => c.pais === pais);
     setSwitching(true);
     setOpen(false);
@@ -36,10 +35,10 @@ export default function Topbar({ userEmail }: { userEmail: string }) {
           ? allConfigs.find((c) => c.pais === pais)!.empresa_nombre
           : "Mi Empresa",
       });
-      await reload();
+      // Recarga completa para que todos los componentes vean el nuevo país
+      window.location.href = "/";
     } catch (err) {
       alert("Error: " + (err as Error).message);
-    } finally {
       setSwitching(false);
     }
   }
