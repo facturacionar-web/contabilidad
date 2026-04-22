@@ -124,12 +124,14 @@ export default function ContactosPage() {
     setCuitLoading(true);
     try {
       const res = await fetch(`/api/cuit?cuit=${cuit}`);
-      if (!res.ok) throw new Error("No encontrado");
       const data = await res.json();
-      if (data.razon_social) setForm((f) => ({ ...f, nombre: data.razon_social }));
-      else alert("CUIT no encontrado en el padrón.");
-    } catch {
-      alert("No se pudo consultar el CUIT. Verificá que sea correcto.");
+      if (data.razon_social) {
+        setForm((f) => ({ ...f, nombre: data.razon_social }));
+      } else {
+        alert(`CUIT no encontrado en AFIP: ${data.error ?? "sin resultado"}`);
+      }
+    } catch (err) {
+      alert("Error al consultar AFIP: " + (err as Error).message);
     } finally {
       setCuitLoading(false);
     }
