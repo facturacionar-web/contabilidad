@@ -122,51 +122,16 @@ export default function ContactosPage() {
     const cuit = form.tax_id.replace(/\D/g, "");
     if (cuit.length < 10) return;
     setCuitLoading(true);
-
-    function extraerRazon(data: Record<string, unknown>): string | null {
-      // Formato AFIP sr-padron: { data: { denominacion, apellido, nombre } }
-      const p = (data?.data ?? data?.persona ?? data) as Record<string, unknown>;
-      const razonAfip =
-        (p?.denominacion as string) ||
-        (p?.apellido
-          ? `${p.apellido}${p.nombre ? " " + p.nombre : ""}`.trim()
-          : null);
-      if (razonAfip) return razonAfip;
-      // Formato TangoFactura: { Contribuyente: { RazonSocial, Apellido, Nombre } }
-      const c = (data?.Contribuyente ?? data?.contribuyente) as Record<string, unknown>;
-      return (
-        (c?.RazonSocial as string) ||
-        (c?.Apellido ? `${c.Apellido}${c.Nombre ? " " + c.Nombre : ""}`.trim() : null) ||
-        null
-      );
-    }
-
-    const endpoints = [
-      `https://serviciosweb.afip.gob.ar/sr-padron/v2/persona/${cuit}`,
-      `https://serviciosweb.afip.gob.ar/sr-padron/v4/persona/${cuit}`,
-      `/api/cuit?cuit=${cuit}`, // fallback server-side
-    ];
-
     try {
-      for (const url of endpoints) {
-        try {
-          const res = await fetch(url, { headers: { Accept: "application/json" } });
-          const data = await res.json().catch(() => null);
-          if (!data) continue;
-          if (data.razon_social) {
-            setForm((f) => ({ ...f, nombre: data.razon_social }));
-            return;
-          }
-          const razon = extraerRazon(data as Record<string, unknown>);
-          if (razon) {
-            setForm((f) => ({ ...f, nombre: razon }));
-            return;
-          }
-        } catch {
-          continue;
-        }
+      const res = await fetch(`/api/cuit?cuit=${cuit}`);
+      const data = await res.json();
+      if (data.razon_social) {
+        setForm((f) => ({ ...f, nombre: data.razon_social }));
+      } else {
+        alert(`CUIT no encontrado: ${data.error ?? "sin resultado"}`);
       }
-      alert("CUIT no encontrado en el padrón AFIP.");
+    } catch (err) {
+      alert("Error: " + (err as Error).message);
     } finally {
       setCuitLoading(false);
     }
