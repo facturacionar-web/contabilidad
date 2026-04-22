@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { COUNTRIES, CountryCode, CURRENCIES, CurrencyCode } from "@/lib/countries";
 import type { Config } from "@/lib/types";
 import PageHeader from "@/components/PageHeader";
-import { Save, Download, Upload, Trash2, Star } from "lucide-react";
+import { Save, Download, Upload, Trash2 } from "lucide-react";
 
 type FormState = {
   moneda_base: CurrencyCode;
@@ -64,17 +64,14 @@ export default function ConfiguracionPage() {
     setSaved(false);
   }
 
-  const isActiveDashboard = allConfigs.find((c) => c.pais === paisActivo)?.is_active
-    ?? (paisActivo === config?.pais);
-
-  async function handleSave(e: React.FormEvent, makeActive = false) {
+  async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
     try {
-      const estaActivo = isActiveDashboard || makeActive;
+      // Guardar siempre activa este país en el dashboard
       const payload: Partial<Config> & { pais: string } = {
         pais: paisActivo,
-        is_active: estaActivo,
+        is_active: true,
         moneda_base: form.moneda_base,
         empresa_nombre: form.empresa_nombre || "Mi Empresa",
         empresa_tax_id: form.empresa_tax_id || null,
@@ -88,25 +85,6 @@ export default function ConfiguracionPage() {
       setTimeout(() => setSaved(false), 2500);
     } catch (err) {
       alert("Error al guardar: " + (err as Error).message);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function setComoActivo() {
-    setSaving(true);
-    try {
-      const existing = allConfigs.find((c) => c.pais === paisActivo);
-      if (!existing) {
-        alert("Guardá primero los datos de este país.");
-        return;
-      }
-      await saveConfig({ pais: paisActivo, is_active: true });
-      await reload();
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2500);
-    } catch (err) {
-      alert("Error: " + (err as Error).message);
     } finally {
       setSaving(false);
     }
@@ -192,7 +170,6 @@ export default function ConfiguracionPage() {
     }
   }
 
-  const activeDashboardPais = allConfigs.find((c) => c.is_active)?.pais ?? config?.pais ?? "MX";
 
   return (
     <>
@@ -224,20 +201,9 @@ export default function ConfiguracionPage() {
         })}
       </div>
 
-      {!isActiveDashboard && (
-        <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center justify-between gap-3">
-          <p className="text-sm text-amber-800">
-            Este país no es el activo en el dashboard. El activo actual es <strong>{COUNTRIES[activeDashboardPais].flag} {COUNTRIES[activeDashboardPais].name}</strong>.
-          </p>
-          <button
-            className="btn btn-secondary text-sm shrink-0"
-            onClick={setComoActivo}
-            disabled={saving}
-          >
-            <Star className="w-3.5 h-3.5" /> Establecer como activo
-          </button>
-        </div>
-      )}
+      <p className="text-sm text-[var(--muted)] mb-4 -mt-2">
+        Al guardar, este país quedará activo en el dashboard y la barra superior.
+      </p>
 
       <form onSubmit={handleSave} className="space-y-6 max-w-3xl">
         <div className="card">
@@ -308,21 +274,11 @@ export default function ConfiguracionPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-3">
           <button type="submit" className="btn btn-primary" disabled={saving}>
             <Save className="w-4 h-4" />
             {saving ? "Guardando…" : "Guardar cambios"}
           </button>
-          {!isActiveDashboard && (
-            <button
-              type="button"
-              className="btn btn-secondary"
-              disabled={saving}
-              onClick={(e) => { e.preventDefault(); handleSave(e as never, true); }}
-            >
-              <Star className="w-4 h-4" /> Guardar y establecer como activo
-            </button>
-          )}
           {saved && <span className="text-sm text-green-600 font-medium">✓ Guardado</span>}
         </div>
       </form>
