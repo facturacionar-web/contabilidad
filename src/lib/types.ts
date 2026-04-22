@@ -80,6 +80,7 @@ export interface NotaCredito {
 export interface Config {
   user_id: string;
   pais: CountryCode;
+  is_active: boolean;
   moneda_base: CurrencyCode;
   empresa_nombre: string;
   empresa_tax_id?: string | null;

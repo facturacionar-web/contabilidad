@@ -5,10 +5,9 @@ import { createClient } from "@/lib/supabase/client";
 import { COUNTRIES, CountryCode, CURRENCIES, CurrencyCode } from "@/lib/countries";
 import type { Config } from "@/lib/types";
 import PageHeader from "@/components/PageHeader";
-import { Save, Download, Upload, Trash2 } from "lucide-react";
+import { Save, Download, Upload, Trash2, Star } from "lucide-react";
 
 type FormState = {
-  pais: CountryCode;
   moneda_base: CurrencyCode;
   empresa_nombre: string;
   empresa_tax_id: string;
@@ -17,41 +16,67 @@ type FormState = {
   empresa_direccion: string;
 };
 
+const PAISES_APP: CountryCode[] = ["MX", "AR", "CL"];
+
+function emptyForm(pais: CountryCode): FormState {
+  return {
+    moneda_base: COUNTRIES[pais].currency,
+    empresa_nombre: "",
+    empresa_tax_id: "",
+    empresa_email: "",
+    empresa_telefono: "",
+    empresa_direccion: "",
+  };
+}
+
+function configToForm(c: Config): FormState {
+  return {
+    moneda_base: c.moneda_base,
+    empresa_nombre: c.empresa_nombre ?? "",
+    empresa_tax_id: c.empresa_tax_id ?? "",
+    empresa_email: c.empresa_email ?? "",
+    empresa_telefono: c.empresa_telefono ?? "",
+    empresa_direccion: c.empresa_direccion ?? "",
+  };
+}
+
 export default function ConfiguracionPage() {
-  const { config, ready, reload } = useConfig();
-  const [form, setForm] = useState<FormState | null>(null);
+  const { config, allConfigs, ready, reload } = useConfig();
+  const [paisActivo, setPaisActivo] = useState<CountryCode>("MX");
+  const [form, setForm] = useState<FormState>(emptyForm("MX"));
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
+  // Inicializar con el país activo del dashboard
   useEffect(() => {
     if (config) {
-      setForm({
-        pais: config.pais,
-        moneda_base: config.moneda_base,
-        empresa_nombre: config.empresa_nombre ?? "",
-        empresa_tax_id: config.empresa_tax_id ?? "",
-        empresa_email: config.empresa_email ?? "",
-        empresa_telefono: config.empresa_telefono ?? "",
-        empresa_direccion: config.empresa_direccion ?? "",
-      });
+      setPaisActivo(config.pais);
+      setForm(configToForm(config));
     }
   }, [config]);
 
-  if (!ready || !form) return <p className="text-[var(--muted)] p-6">Cargando…</p>;
+  if (!ready) return <p className="text-[var(--muted)] p-6">Cargando…</p>;
 
-  function changeCountry(code: CountryCode) {
-    setForm((f) => f ? { ...f, pais: code, moneda_base: COUNTRIES[code].currency } : f);
+  function switchPais(pais: CountryCode) {
+    setPaisActivo(pais);
+    const existing = allConfigs.find((c) => c.pais === pais);
+    setForm(existing ? configToForm(existing) : emptyForm(pais));
+    setSaved(false);
   }
 
-  async function handleSave(e: React.FormEvent) {
+  const isActiveDashboard = allConfigs.find((c) => c.pais === paisActivo)?.is_active
+    ?? (paisActivo === config?.pais);
+
+  async function handleSave(e: React.FormEvent, makeActive = false) {
     e.preventDefault();
-    if (!form) return;
     setSaving(true);
     try {
-      const payload: Partial<Config> = {
-        pais: form.pais,
+      const estaActivo = isActiveDashboard || makeActive;
+      const payload: Partial<Config> & { pais: string } = {
+        pais: paisActivo,
+        is_active: estaActivo,
         moneda_base: form.moneda_base,
-        empresa_nombre: form.empresa_nombre,
+        empresa_nombre: form.empresa_nombre || "Mi Empresa",
         empresa_tax_id: form.empresa_tax_id || null,
         empresa_email: form.empresa_email || null,
         empresa_telefono: form.empresa_telefono || null,
@@ -63,6 +88,25 @@ export default function ConfiguracionPage() {
       setTimeout(() => setSaved(false), 2500);
     } catch (err) {
       alert("Error al guardar: " + (err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function setComoActivo() {
+    setSaving(true);
+    try {
+      const existing = allConfigs.find((c) => c.pais === paisActivo);
+      if (!existing) {
+        alert("Guardá primero los datos de este país.");
+        return;
+      }
+      await saveConfig({ pais: paisActivo, is_active: true });
+      await reload();
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (err) {
+      alert("Error: " + (err as Error).message);
     } finally {
       setSaving(false);
     }
@@ -85,9 +129,7 @@ export default function ConfiguracionPage() {
         gastos: gastos.data ?? [],
         notas_credito: notas.data ?? [],
       };
-      const blob = new Blob([JSON.stringify(data, null, 2)], {
-        type: "application/json",
-      });
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -109,21 +151,14 @@ export default function ConfiguracionPage() {
       const text = await file.text();
       try {
         const data = JSON.parse(text);
-        if (
-          !confirm(
-            "Esto añadirá los registros del archivo a tu cuenta actual. Los registros existentes NO se borrarán. ¿Continuar?"
-          )
-        )
-          return;
+        if (!confirm("Esto añadirá los registros del archivo a tu cuenta. ¿Continuar?")) return;
         const supabase = createClient();
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) throw new Error("No autenticado");
-
         const tables = ["contactos", "ingresos", "gastos", "notas_credito"] as const;
         for (const table of tables) {
           const rows = (data[table] ?? []) as Record<string, unknown>[];
           if (rows.length === 0) continue;
-          // Strip existing id/user_id so Supabase assigns new ones
           const clean = rows.map(({ id: _id, user_id: _uid, created_at: _ca, ...rest }) => ({
             ...rest,
             user_id: user.id,
@@ -141,12 +176,7 @@ export default function ConfiguracionPage() {
   }
 
   async function deleteAll() {
-    if (
-      !confirm(
-        "⚠️ Esto borrará TODOS tus datos (contactos, ingresos, gastos, notas). No se puede deshacer. ¿Continuar?"
-      )
-    )
-      return;
+    if (!confirm("⚠️ Esto borrará TODOS tus datos (contactos, ingresos, gastos, notas). No se puede deshacer. ¿Continuar?")) return;
     if (!confirm("Confirma una vez más: ¿borrar todos los datos?")) return;
     try {
       const supabase = createClient();
@@ -162,60 +192,74 @@ export default function ConfiguracionPage() {
     }
   }
 
+  const activeDashboardPais = allConfigs.find((c) => c.is_active)?.pais ?? config?.pais ?? "MX";
+
   return (
     <>
       <PageHeader
         title="Configuración"
-        description="Datos de la empresa, país y moneda"
+        description="Datos de la empresa por país"
       />
+
+      {/* Selector de país */}
+      <div className="flex gap-2 mb-6 flex-wrap">
+        {PAISES_APP.map((p) => {
+          const tiene = allConfigs.some((c) => c.pais === p);
+          const esActivo = p === activeDashboardPais;
+          return (
+            <button
+              key={p}
+              onClick={() => switchPais(p)}
+              className={`px-4 py-2 rounded-lg text-sm font-medium border transition-colors flex items-center gap-2 ${
+                paisActivo === p
+                  ? "bg-[var(--primary)] text-white border-[var(--primary)]"
+                  : "bg-white border-[var(--border)] text-[var(--foreground)] hover:border-[var(--primary)]"
+              }`}
+            >
+              {COUNTRIES[p].flag} {COUNTRIES[p].name}
+              {esActivo && <Star className="w-3 h-3 fill-current" />}
+              {!tiene && <span className="text-[0.65rem] opacity-60">(sin datos)</span>}
+            </button>
+          );
+        })}
+      </div>
+
+      {!isActiveDashboard && (
+        <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center justify-between gap-3">
+          <p className="text-sm text-amber-800">
+            Este país no es el activo en el dashboard. El activo actual es <strong>{COUNTRIES[activeDashboardPais].flag} {COUNTRIES[activeDashboardPais].name}</strong>.
+          </p>
+          <button
+            className="btn btn-secondary text-sm shrink-0"
+            onClick={setComoActivo}
+            disabled={saving}
+          >
+            <Star className="w-3.5 h-3.5" /> Establecer como activo
+          </button>
+        </div>
+      )}
 
       <form onSubmit={handleSave} className="space-y-6 max-w-3xl">
         <div className="card">
-          <h3 className="font-semibold mb-4">País y moneda</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="label">País *</label>
-              <select
-                className="select"
-                value={form.pais}
-                onChange={(e) => changeCountry(e.target.value as CountryCode)}
-              >
-                {Object.values(COUNTRIES).map((c) => (
-                  <option key={c.code} value={c.code}>
-                    {c.flag} {c.name}
-                  </option>
-                ))}
-              </select>
-              <p className="text-xs text-[var(--muted)] mt-1">
-                Define el IVA por defecto y el formato del identificador fiscal
-                ({COUNTRIES[form.pais].taxIdLabel}).
-              </p>
-            </div>
+          <h3 className="font-semibold mb-4">
+            {COUNTRIES[paisActivo].flag} Datos de empresa — {COUNTRIES[paisActivo].name}
+          </h3>
+          <div className="space-y-4">
             <div>
               <label className="label">Moneda base *</label>
               <select
                 className="select"
                 value={form.moneda_base}
-                onChange={(e) =>
-                  setForm({ ...form, moneda_base: e.target.value as CurrencyCode })
-                }
+                onChange={(e) => setForm({ ...form, moneda_base: e.target.value as CurrencyCode })}
               >
                 {Object.values(CURRENCIES).map((c) => (
-                  <option key={c.code} value={c.code}>
-                    {c.code} — {c.name}
-                  </option>
+                  <option key={c.code} value={c.code}>{c.code} — {c.name}</option>
                 ))}
               </select>
               <p className="text-xs text-[var(--muted)] mt-1">
-                Moneda principal para el dashboard y los reportes.
+                Moneda principal para el dashboard y los reportes cuando este país está activo.
               </p>
             </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <h3 className="font-semibold mb-4">Datos de la empresa</h3>
-          <div className="space-y-4">
             <div>
               <label className="label">Nombre / Razón social *</label>
               <input
@@ -227,10 +271,10 @@ export default function ConfiguracionPage() {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="label">{COUNTRIES[form.pais].taxIdLabel}</label>
+                <label className="label">{COUNTRIES[paisActivo].taxIdLabel}</label>
                 <input
                   className="input"
-                  placeholder={COUNTRIES[form.pais].taxIdPlaceholder}
+                  placeholder={COUNTRIES[paisActivo].taxIdPlaceholder}
                   value={form.empresa_tax_id}
                   onChange={(e) => setForm({ ...form, empresa_tax_id: e.target.value })}
                 />
@@ -258,19 +302,27 @@ export default function ConfiguracionPage() {
               <input
                 className="input"
                 value={form.empresa_direccion}
-                onChange={(e) =>
-                  setForm({ ...form, empresa_direccion: e.target.value })
-                }
+                onChange={(e) => setForm({ ...form, empresa_direccion: e.target.value })}
               />
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <button type="submit" className="btn btn-primary" disabled={saving}>
             <Save className="w-4 h-4" />
             {saving ? "Guardando…" : "Guardar cambios"}
           </button>
+          {!isActiveDashboard && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={saving}
+              onClick={(e) => { e.preventDefault(); handleSave(e as never, true); }}
+            >
+              <Star className="w-4 h-4" /> Guardar y establecer como activo
+            </button>
+          )}
           {saved && <span className="text-sm text-green-600 font-medium">✓ Guardado</span>}
         </div>
       </form>
@@ -278,8 +330,7 @@ export default function ConfiguracionPage() {
       <div className="card max-w-3xl mt-8">
         <h3 className="font-semibold mb-2">Respaldo de datos</h3>
         <p className="text-sm text-[var(--muted)] mb-4">
-          Exporta un archivo JSON con todos tus datos como respaldo adicional,
-          o importa datos de una exportación anterior.
+          Exportá un archivo JSON con todos tus registros como respaldo adicional.
         </p>
         <div className="flex flex-wrap gap-2">
           <button className="btn btn-secondary" type="button" onClick={exportData}>
