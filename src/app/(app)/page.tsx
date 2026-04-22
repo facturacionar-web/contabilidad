@@ -1,4 +1,6 @@
 "use client";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useTable, paisFilter } from "@/lib/useSupabaseData";
 import { useConfig } from "@/lib/useConfig";
 import { formatMoney, formatDate, monthRange, todayISO } from "@/lib/format";
@@ -9,13 +11,17 @@ import {
   Users,
   Wallet,
   ArrowRight,
+  Search,
 } from "lucide-react";
 import Link from "next/link";
 import PageHeader from "@/components/PageHeader";
 
 export default function Dashboard() {
+  const router = useRouter();
   const { config, country } = useConfig();
   const pais = config?.pais;
+  const [search, setSearch] = useState("");
+  const [searchFocus, setSearchFocus] = useState(false);
   const { start, end } = monthRange(todayISO());
 
   const { data: ingresos } = useTable("ingresos", { orderBy: "fecha", filter: paisFilter(pais), skip: !pais, deps: [pais] });
@@ -59,12 +65,45 @@ export default function Dashboard() {
   const recentIngresos = [...ingresosMes].sort((a, b) => b.fecha.localeCompare(a.fecha)).slice(0, 5);
   const recentGastos = [...gastosMes].sort((a, b) => b.fecha.localeCompare(a.fecha)).slice(0, 5);
 
+  const contactosFiltrados = search.trim()
+    ? (contactos ?? []).filter((c) =>
+        c.nombre.toLowerCase().includes(search.toLowerCase()) ||
+        (c.tax_id?.toLowerCase() ?? "").includes(search.toLowerCase())
+      ).slice(0, 6)
+    : [];
+
   return (
     <>
       <PageHeader
         title={`Hola, ${config?.empresa_nombre ?? ""}`}
         description={`Resumen de ${new Date().toLocaleDateString(country.locale, { month: "long", year: "numeric" })} (moneda base ${base})`}
       />
+
+      <div className="relative mb-6 max-w-md">
+        <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+        <input
+          className="input pl-9 w-full"
+          placeholder="Buscar contacto por nombre o CUIT…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          onFocus={() => setSearchFocus(true)}
+          onBlur={() => setTimeout(() => setSearchFocus(false), 150)}
+        />
+        {(searchFocus || search) && contactosFiltrados.length > 0 && (
+          <div className="absolute top-full mt-1 w-full bg-white border border-[var(--border)] rounded-xl shadow-lg z-50 overflow-hidden">
+            {contactosFiltrados.map((c) => (
+              <button
+                key={c.id}
+                className="w-full px-4 py-2.5 text-left hover:bg-slate-50 flex items-center justify-between gap-3"
+                onClick={() => { setSearch(""); router.push(`/contactos/${c.id}`); }}
+              >
+                <span className="font-medium text-sm">{c.nombre}</span>
+                <span className="text-xs text-[var(--muted)] shrink-0">{c.tipo} {c.tax_id ? `· ${c.tax_id}` : ""}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         {kpis.map((k) => {
