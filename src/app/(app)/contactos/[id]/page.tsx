@@ -1,6 +1,7 @@
 "use client";
-import { use, useMemo, useState } from "react";
+import { use, useMemo, useState, useEffect } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   useTable,
   updateRow,
@@ -37,7 +38,14 @@ export default function ContactoDashboardPage({
   const pais = config?.pais;
   const base = config?.moneda_base ?? "MXN";
 
-  const [tab, setTab] = useState<Tab>("facturas");
+  const searchParams = useSearchParams();
+  const [tab, setTab] = useState<Tab>(() =>
+    searchParams.get("tab") === "pagos" ? "pagos" : "facturas"
+  );
+
+  useEffect(() => {
+    if (searchParams.get("tab") === "pagos") setTab("pagos");
+  }, [searchParams]);
 
   const { data: contactos } = useTable("contactos", {
     orderBy: "nombre",

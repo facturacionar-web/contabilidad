@@ -41,6 +41,19 @@ export interface Ingreso {
 export type GastoTipo = "gasto" | "factura_proveedor";
 export type GastoEstado = "pagado" | "pendiente" | "parcial";
 
+export interface FacturaItem {
+  concepto_id: string | null;
+  concepto_nombre: string;
+  precio: number;
+  descuento: number;
+  impuesto: number;
+  cantidad: number;
+  observaciones: string;
+  neto: number;
+  iva_monto: number;
+  total: number;
+}
+
 export interface Gasto {
   id: number;
   user_id?: string;
@@ -63,6 +76,7 @@ export interface Gasto {
   metodo_pago?: string | null;
   monto_pagado: number;
   notas?: string | null;
+  items?: FacturaItem[] | null;
   created_at?: string;
 }
 
