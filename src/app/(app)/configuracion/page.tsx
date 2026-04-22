@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { COUNTRIES, CountryCode, CURRENCIES, CurrencyCode } from "@/lib/countries";
 import type { Config } from "@/lib/types";
 import PageHeader from "@/components/PageHeader";
-import { Save, Download, Upload, Trash2 } from "lucide-react";
+import { Save, Download, Upload, Trash2, Star } from "lucide-react";
 
 type FormState = {
   moneda_base: CurrencyCode;
@@ -63,6 +63,8 @@ export default function ConfiguracionPage() {
     setForm(existing ? configToForm(existing) : emptyForm(pais));
     setSaved(false);
   }
+
+  const activeDashboardPais = allConfigs.find((c) => c.is_active)?.pais ?? config?.pais ?? "MX";
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
