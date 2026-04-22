@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useTable, insertRow, updateRow, deleteRow, paisFilter } from "@/lib/useSupabaseData";
 import type { Contacto, ContactoTipo } from "@/lib/types";
 import { useConfig } from "@/lib/useConfig";
@@ -30,6 +31,7 @@ const BLANK: FormState = {
 };
 
 export default function ContactosPage() {
+  const router = useRouter();
   const { config } = useConfig();
   const pais = config?.pais;
   const [open, setOpen] = useState(false);
@@ -228,15 +230,19 @@ export default function ContactosPage() {
             </thead>
             <tbody>
               {filtered.map((c) => (
-                <tr key={c.id}>
-                  <td className="font-medium">{c.nombre}</td>
+                <tr
+                  key={c.id}
+                  className="cursor-pointer hover:bg-slate-50"
+                  onClick={() => router.push(`/contactos/${c.id}`)}
+                >
+                  <td className="font-medium text-[var(--primary-hover)]">{c.nombre}</td>
                   <td>{badge(c.tipo)}</td>
                   <td className="text-[var(--muted)]">{c.tax_id || "—"}</td>
                   <td className="text-[var(--muted)]">
                     {c.email || c.telefono || "—"}
                   </td>
                   <td>{c.pais ? `${COUNTRIES[c.pais].flag} ${c.pais}` : "—"}</td>
-                  <td className="text-right">
+                  <td className="text-right" onClick={(e) => e.stopPropagation()}>
                     <button className="btn btn-ghost p-1.5" onClick={() => openEdit(c)} title="Editar">
                       <Pencil className="w-4 h-4" />
                     </button>

@@ -1,5 +1,6 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { useTable, insertRow, updateRow, deleteRow, paisFilter } from "@/lib/useSupabaseData";
 import type { Gasto, GastoEstado } from "@/lib/types";
 import { useConfig } from "@/lib/useConfig";
@@ -50,6 +51,8 @@ export default function FacturasPage() {
   const { config, country } = useConfig();
   const pais = config?.pais;
   const monedas = pais ? monedasDisponibles(pais) : (["MXN"] as CurrencyCode[]);
+  const searchParams = useSearchParams();
+  const router = useRouter();
 
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Gasto | null>(null);
@@ -57,6 +60,7 @@ export default function FacturasPage() {
   const [search, setSearch] = useState("");
   const [filterEstado, setFilterEstado] = useState<"todos" | GastoEstado>("todos");
   const [saving, setSaving] = useState(false);
+  const autoOpenedRef = useRef(false);
 
   const { data: gastos, reload } = useTable("gastos", {
     orderBy: "fecha",
@@ -110,11 +114,29 @@ export default function FacturasPage() {
     {}
   );
 
-  function openNew() {
+  function openNew(proveedorId?: number) {
     setEditing(null);
-    setForm(blank(monedas[0], country.ivaDefault));
+    const f = blank(monedas[0], country.ivaDefault);
+    if (proveedorId) f.contacto_id = proveedorId;
+    setForm(f);
     setOpen(true);
   }
+
+  useEffect(() => {
+    if (autoOpenedRef.current) return;
+    if (!pais) return;
+    if (searchParams.get("nuevo") !== "1") return;
+    const proveedorParam = searchParams.get("proveedor");
+    const proveedorId = proveedorParam ? Number(proveedorParam) : undefined;
+    autoOpenedRef.current = true;
+    openNew(proveedorId);
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("nuevo");
+    params.delete("proveedor");
+    const qs = params.toString();
+    router.replace(qs ? `/egresos/facturas?${qs}` : "/egresos/facturas");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pais, searchParams]);
 
   function openEdit(g: Gasto) {
     setEditing(g);
@@ -212,7 +234,7 @@ export default function FacturasPage() {
         title="Facturas de proveedor"
         description="Facturas recibidas de proveedores y sus estados de pago"
         action={
-          <button className="btn btn-primary" onClick={openNew}>
+          <button className="btn btn-primary" onClick={() => openNew()}>
             <Plus className="w-4 h-4" /> Nueva factura
           </button>
         }
@@ -268,7 +290,7 @@ export default function FacturasPage() {
             description="Registrá las facturas recibidas de tus proveedores."
             action={
               !gastos?.length && (
-                <button className="btn btn-primary" onClick={openNew}>
+                <button className="btn btn-primary" onClick={() => openNew()}>
                   <Plus className="w-4 h-4" /> Nueva factura
                 </button>
               )
