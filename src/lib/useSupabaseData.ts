@@ -1,0 +1,92 @@
+"use client";
+import { useEffect, useState, useCallback } from "react";
+import { createClient } from "@/lib/supabase/client";
+import type {
+  Contacto,
+  Ingreso,
+  Gasto,
+  NotaCredito,
+} from "./types";
+
+type TableMap = {
+  contactos: Contacto;
+  ingresos: Ingreso;
+  gastos: Gasto;
+  notas_credito: NotaCredito;
+};
+
+export function useTable<K extends keyof TableMap>(
+  table: K,
+  opts: {
+    orderBy?: string;
+    ascending?: boolean;
+    filter?: { column: string; op: "eq"; value: unknown }[];
+    deps?: unknown[];
+  } = {}
+) {
+  const { orderBy = "id", ascending = false, filter, deps = [] } = opts;
+  const [data, setData] = useState<TableMap[K][] | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    const supabase = createClient();
+    let query = supabase.from(table).select("*");
+    if (filter) {
+      for (const f of filter) query = query.eq(f.column, f.value as never);
+    }
+    query = query.order(orderBy, { ascending });
+    const { data: rows, error } = await query;
+    if (error) {
+      setError(error.message);
+      setData([]);
+    } else {
+      setError(null);
+      setData(rows as TableMap[K][]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [table, orderBy, ascending, JSON.stringify(filter)]);
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load, ...deps]);
+
+  return { data, error, reload: load };
+}
+
+export async function insertRow<K extends keyof TableMap>(
+  table: K,
+  row: Partial<TableMap[K]>
+) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("No autenticado");
+  const { error } = await supabase
+    .from(table)
+    .insert({ ...row, user_id: user.id } as never);
+  if (error) throw new Error(error.message);
+}
+
+export async function updateRow<K extends keyof TableMap>(
+  table: K,
+  id: number,
+  patch: Partial<TableMap[K]>
+) {
+  const supabase = createClient();
+  const { error } = await supabase
+    .from(table)
+    .update(patch as never)
+    .eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteRow<K extends keyof TableMap>(
+  table: K,
+  id: number
+) {
+  const supabase = createClient();
+  const { error } = await supabase.from(table).delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
