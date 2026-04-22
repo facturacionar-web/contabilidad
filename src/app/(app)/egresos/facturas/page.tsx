@@ -9,14 +9,14 @@ import { formatMoney, formatDate, todayISO } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
 import Modal from "@/components/Modal";
 import EmptyState from "@/components/EmptyState";
+import Link from "next/link";
 import { Plus, Receipt, Pencil, Trash2, Search, CheckCircle2, X } from "lucide-react";
 
-// ── Line item in the form ──────────────────────────────────────────────────
+// ── Types ──────────────────────────────────────────────────────────────────
 type LineItem = {
   key: string;
   concepto_id: string;
   precio: number;
-  descuento: number;
   impuesto: number;
   cantidad: number;
   observaciones: string;
@@ -28,6 +28,7 @@ type FormState = {
   contacto_id: number | "";
   numero_factura: string;
   moneda: CurrencyCode;
+  tasa_cambio: number;
   notas: string;
   items: LineItem[];
 };
@@ -35,31 +36,39 @@ type FormState = {
 let _keyCounter = 0;
 const nextKey = () => String(++_keyCounter);
 
-function blankItem(ivaDefault: number): LineItem {
-  return { key: nextKey(), concepto_id: "", precio: 0, descuento: 0, impuesto: ivaDefault, cantidad: 1, observaciones: "" };
+function blankItem(): LineItem {
+  return { key: nextKey(), concepto_id: "", precio: 0, impuesto: 0, cantidad: 1, observaciones: "" };
 }
 
-function blank(moneda: CurrencyCode, ivaDefault: number): FormState {
-  return { fecha: todayISO(), fecha_vencimiento: "", contacto_id: "", numero_factura: "", moneda, notas: "", items: [blankItem(ivaDefault)] };
+function blank(moneda: CurrencyCode): FormState {
+  return { fecha: todayISO(), fecha_vencimiento: "", contacto_id: "", numero_factura: "", moneda, tasa_cambio: 1, notas: "", items: [blankItem()] };
 }
 
-function gastoToForm(g: Gasto, ivaDefault: number): FormState {
+function gastoToForm(g: Gasto): FormState {
   const raw = (g as unknown as { items?: FacturaItem[] }).items;
   const items: LineItem[] = raw?.length
     ? raw.map((it, i) => ({
         key: String(i),
         concepto_id: it.concepto_id ?? "",
         precio: Number(it.precio),
-        descuento: Number(it.descuento),
         impuesto: Number(it.impuesto),
         cantidad: Number(it.cantidad),
         observaciones: it.observaciones ?? "",
       }))
-    : [{ key: "0", concepto_id: g.concepto_id ?? "", precio: Number(g.subtotal), descuento: 0, impuesto: Number(g.iva), cantidad: 1, observaciones: "" }];
-  return { fecha: g.fecha, fecha_vencimiento: g.fecha_vencimiento ?? "", contacto_id: g.contacto_id ?? "", numero_factura: g.numero_factura ?? "", moneda: g.moneda, notas: g.notas ?? "", items };
+    : [{ key: "0", concepto_id: g.concepto_id ?? "", precio: Number(g.subtotal), impuesto: Number(g.iva), cantidad: 1, observaciones: "" }];
+  return {
+    fecha: g.fecha,
+    fecha_vencimiento: g.fecha_vencimiento ?? "",
+    contacto_id: g.contacto_id ?? "",
+    numero_factura: g.numero_factura ?? "",
+    moneda: g.moneda,
+    tasa_cambio: (g as unknown as { tasa_cambio?: number }).tasa_cambio ?? 1,
+    notas: g.notas ?? "",
+    items,
+  };
 }
 
-function itemNeto(it: LineItem) { return it.precio * it.cantidad * (1 - it.descuento / 100); }
+function itemNeto(it: LineItem) { return it.precio * it.cantidad; }
 function itemIva(it: LineItem) { return itemNeto(it) * (it.impuesto / 100); }
 function itemTotal(it: LineItem) { return itemNeto(it) + itemIva(it); }
 
@@ -67,13 +76,14 @@ function itemTotal(it: LineItem) { return itemNeto(it) + itemIva(it); }
 export default function FacturasPage() {
   const { config, country } = useConfig();
   const pais = config?.pais;
-  const monedas = pais ? monedasDisponibles(pais) : (["MXN"] as CurrencyCode[]);
+  const base = (config?.moneda_base ?? "ARS") as CurrencyCode;
+  const monedas = pais ? monedasDisponibles(pais) : (["ARS"] as CurrencyCode[]);
   const searchParams = useSearchParams();
   const router = useRouter();
 
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Gasto | null>(null);
-  const [form, setForm] = useState<FormState>(blank("MXN", 21));
+  const [form, setForm] = useState<FormState>(blank(monedas[0] ?? "ARS"));
   const [search, setSearch] = useState("");
   const [filterEstado, setFilterEstado] = useState<"todos" | GastoEstado>("todos");
   const [saving, setSaving] = useState(false);
@@ -84,8 +94,12 @@ export default function FacturasPage() {
     filter: [...(paisFilter(pais) ?? []), { column: "tipo", op: "eq", value: "factura_proveedor" }],
     skip: !pais, deps: [pais],
   });
-  const { data: contactos } = useTable("contactos", { orderBy: "nombre", ascending: true, filter: paisFilter(pais), skip: !pais, deps: [pais] });
-  const { data: conceptosAll } = useTable("conceptos", { orderBy: "nombre", ascending: true, filter: paisFilter(pais), skip: !pais, deps: [pais] });
+  const { data: contactos } = useTable("contactos", {
+    orderBy: "nombre", ascending: true, filter: paisFilter(pais), skip: !pais, deps: [pais],
+  });
+  const { data: conceptosAll } = useTable("conceptos", {
+    orderBy: "nombre", ascending: true, filter: paisFilter(pais), skip: !pais, deps: [pais],
+  });
 
   const conceptos = (conceptosAll ?? []).filter(c => c.tipo === "egreso" || c.tipo === "ambos");
   const proveedores = (contactos ?? []).filter(c => c.tipo === "proveedor" || c.tipo === "ambos");
@@ -100,8 +114,10 @@ export default function FacturasPage() {
   const totals = useMemo(() => {
     const subtotal = form.items.reduce((s, it) => s + itemNeto(it), 0);
     const iva_monto = form.items.reduce((s, it) => s + itemIva(it), 0);
-    return { subtotal, iva_monto, total: subtotal + iva_monto };
-  }, [form.items]);
+    const total = subtotal + iva_monto;
+    const total_base = total * (form.tasa_cambio || 1);
+    return { subtotal, iva_monto, total, total_base };
+  }, [form.items, form.tasa_cambio]);
 
   const totalPorMoneda = (gastos ?? []).reduce<Record<string, { total: number; pendiente: number }>>((acc, g) => {
     if (!acc[g.moneda]) acc[g.moneda] = { total: 0, pendiente: 0 };
@@ -110,9 +126,11 @@ export default function FacturasPage() {
     return acc;
   }, {});
 
+  const isForeignCurrency = form.moneda !== base;
+
   function openNew(proveedorId?: number) {
     setEditing(null);
-    const f = blank(monedas[0], country.ivaDefault);
+    const f = blank(monedas[0] ?? base);
     if (proveedorId) f.contacto_id = proveedorId;
     setForm(f);
     setOpen(true);
@@ -130,8 +148,8 @@ export default function FacturasPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pais, searchParams]);
 
-  function openEdit(g: Gasto) { setEditing(g); setForm(gastoToForm(g, country.ivaDefault)); setOpen(true); }
-  function addItem() { setForm(f => ({ ...f, items: [...f.items, blankItem(country.ivaDefault)] })); }
+  function openEdit(g: Gasto) { setEditing(g); setForm(gastoToForm(g)); setOpen(true); }
+  function addItem() { setForm(f => ({ ...f, items: [...f.items, blankItem()] })); }
   function removeItem(key: string) { setForm(f => ({ ...f, items: f.items.filter(i => i.key !== key) })); }
   function updateItem(key: string, patch: Partial<Omit<LineItem, "key">>) {
     setForm(f => ({ ...f, items: f.items.map(i => i.key === key ? { ...i, ...patch } : i) }));
@@ -149,7 +167,7 @@ export default function FacturasPage() {
         concepto_id: it.concepto_id || null,
         concepto_nombre: conceptos.find(c => c.id === it.concepto_id)?.nombre ?? "",
         precio: it.precio,
-        descuento: it.descuento,
+        descuento: 0,
         impuesto: it.impuesto,
         cantidad: it.cantidad,
         observaciones: it.observaciones,
@@ -174,6 +192,7 @@ export default function FacturasPage() {
         iva_monto,
         total,
         moneda: form.moneda,
+        tasa_cambio: form.tasa_cambio,
         estado: "pendiente" as GastoEstado,
         metodo_pago: null,
         monto_pagado: 0,
@@ -190,7 +209,7 @@ export default function FacturasPage() {
 
       if (mode === "new") {
         setEditing(null);
-        setForm(blank(form.moneda, country.ivaDefault));
+        setForm(blank(form.moneda));
       } else if (mode === "pay" && form.contacto_id !== "") {
         setOpen(false);
         router.push(`/contactos/${form.contacto_id}?tab=pagos`);
@@ -299,12 +318,35 @@ export default function FacturasPage() {
       <Modal open={open} onClose={() => setOpen(false)} title={editing ? "Editar factura" : "Nueva factura de proveedor"} size="xl">
         <div className="space-y-5">
 
-          {/* Moneda */}
-          <div className="flex items-center gap-3">
-            <label className="label whitespace-nowrap">Moneda *</label>
-            <select className="select w-44" value={form.moneda} onChange={e => setForm({ ...form, moneda: e.target.value as CurrencyCode })}>
-              {monedas.map(code => <option key={code} value={code}>{code} — {CURRENCIES[code].name}</option>)}
-            </select>
+          {/* Moneda + tasa de cambio */}
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-2">
+              <label className="label whitespace-nowrap">Moneda *</label>
+              <select
+                className="select w-44"
+                value={form.moneda}
+                onChange={e => setForm({ ...form, moneda: e.target.value as CurrencyCode, tasa_cambio: 1 })}
+              >
+                {monedas.map(code => <option key={code} value={code}>{code} — {CURRENCIES[code].name}</option>)}
+              </select>
+            </div>
+            {isForeignCurrency && (
+              <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                <span className="text-sm text-amber-800 whitespace-nowrap">
+                  1 {form.moneda} =
+                </span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  className="input w-32 text-sm py-1"
+                  placeholder="Tasa"
+                  value={form.tasa_cambio || ""}
+                  onChange={e => setForm({ ...form, tasa_cambio: parseFloat(e.target.value) || 0 })}
+                />
+                <span className="text-sm text-amber-800 whitespace-nowrap">{base}</span>
+              </div>
+            )}
           </div>
 
           {/* Document header */}
@@ -324,9 +366,19 @@ export default function FacturasPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
               <div className="space-y-3">
                 <div>
-                  <label className="label">Proveedor</label>
-                  <select className="select" value={form.contacto_id} onChange={e => setForm({ ...form, contacto_id: e.target.value === "" ? "" : Number(e.target.value) })}>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="label">Proveedor</label>
+                    <Link href="/contactos" className="text-xs text-[var(--primary)] hover:underline">+ Nuevo proveedor</Link>
+                  </div>
+                  <select
+                    className="select"
+                    value={form.contacto_id}
+                    onChange={e => setForm({ ...form, contacto_id: e.target.value === "" ? "" : Number(e.target.value) })}
+                  >
                     <option value="">— Sin proveedor —</option>
+                    {proveedores.length === 0 && (
+                      <option disabled>No hay proveedores — creá uno en Contactos</option>
+                    )}
                     {proveedores.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                   </select>
                 </div>
@@ -364,9 +416,8 @@ export default function FacturasPage() {
                   <tr>
                     <th className="text-left px-3 py-2 font-medium text-[var(--muted)]">Concepto</th>
                     <th className="text-left px-3 py-2 font-medium text-[var(--muted)] w-32">Precio</th>
-                    <th className="text-left px-3 py-2 font-medium text-[var(--muted)] w-20">Desc%</th>
                     <th className="text-left px-3 py-2 font-medium text-[var(--muted)] w-24">IVA%</th>
-                    <th className="text-left px-3 py-2 font-medium text-[var(--muted)] w-22">Cant.</th>
+                    <th className="text-left px-3 py-2 font-medium text-[var(--muted)] w-20">Cant.</th>
                     <th className="text-left px-3 py-2 font-medium text-[var(--muted)]">Observaciones</th>
                     <th className="text-right px-3 py-2 font-medium text-[var(--muted)] w-32">Total</th>
                     <th className="w-8"></th>
@@ -384,10 +435,6 @@ export default function FacturasPage() {
                       <td className="px-3 py-2">
                         <input type="number" step="0.01" min="0" className="input text-sm py-1 w-full" placeholder="0.00"
                           value={item.precio || ""} onChange={e => updateItem(item.key, { precio: parseFloat(e.target.value) || 0 })} />
-                      </td>
-                      <td className="px-3 py-2">
-                        <input type="number" step="0.1" min="0" max="100" className="input text-sm py-1 w-full" placeholder="0"
-                          value={item.descuento || ""} onChange={e => updateItem(item.key, { descuento: parseFloat(e.target.value) || 0 })} />
                       </td>
                       <td className="px-3 py-2">
                         <select className="select text-sm py-1 w-full" value={item.impuesto} onChange={e => updateItem(item.key, { impuesto: parseFloat(e.target.value) })}>
@@ -426,7 +473,7 @@ export default function FacturasPage() {
 
           {/* Totals */}
           <div className="flex justify-end">
-            <div className="space-y-1 text-sm w-52">
+            <div className="space-y-1 text-sm w-64">
               <div className="flex justify-between">
                 <span className="text-[var(--muted)]">Subtotal</span>
                 <span className="font-medium">{formatMoney(totals.subtotal, form.moneda, country.locale)}</span>
@@ -438,9 +485,15 @@ export default function FacturasPage() {
                 </div>
               )}
               <div className="flex justify-between pt-1 border-t border-[var(--border)]">
-                <span className="font-semibold">Total</span>
+                <span className="font-semibold">Total {form.moneda}</span>
                 <span className="font-bold text-base">{formatMoney(totals.total, form.moneda, country.locale)}</span>
               </div>
+              {isForeignCurrency && form.tasa_cambio > 0 && (
+                <div className="flex justify-between text-amber-700 bg-amber-50 -mx-2 px-2 py-1 rounded">
+                  <span className="font-semibold">Total {base}</span>
+                  <span className="font-bold">{formatMoney(totals.total_base, base, country.locale)}</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -453,13 +506,9 @@ export default function FacturasPage() {
           {/* Actions */}
           <div className="flex flex-wrap justify-end gap-2 pt-2 border-t border-[var(--border)]">
             <button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancelar</button>
-            <button type="button" className="btn btn-secondary" disabled={saving} onClick={() => handleSave("new")}>
-              Guardar y crear nueva
-            </button>
+            <button type="button" className="btn btn-secondary" disabled={saving} onClick={() => handleSave("new")}>Guardar y crear nueva</button>
             {form.contacto_id !== "" && (
-              <button type="button" className="btn btn-secondary" disabled={saving} onClick={() => handleSave("pay")}>
-                Guardar y agregar pago
-              </button>
+              <button type="button" className="btn btn-secondary" disabled={saving} onClick={() => handleSave("pay")}>Guardar y agregar pago</button>
             )}
             <button type="button" className="btn btn-primary" disabled={saving} onClick={() => handleSave("save")}>
               {saving ? "Guardando…" : "Guardar"}
