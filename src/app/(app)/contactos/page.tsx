@@ -1,13 +1,13 @@
 "use client";
 import { useState } from "react";
-import { useTable, insertRow, updateRow, deleteRow } from "@/lib/useSupabaseData";
+import { useTable, insertRow, updateRow, deleteRow, paisFilter } from "@/lib/useSupabaseData";
 import type { Contacto, ContactoTipo } from "@/lib/types";
 import { useConfig } from "@/lib/useConfig";
 import { COUNTRIES, CountryCode } from "@/lib/countries";
 import PageHeader from "@/components/PageHeader";
 import Modal from "@/components/Modal";
 import EmptyState from "@/components/EmptyState";
-import { Plus, Users, Pencil, Trash2, Search } from "lucide-react";
+import { Plus, Users, Pencil, Trash2, Search, Loader2 } from "lucide-react";
 
 type FormState = {
   tipo: ContactoTipo;
@@ -32,17 +32,22 @@ const BLANK: FormState = {
 };
 
 export default function ContactosPage() {
-  const { country } = useConfig();
+  const { config, country } = useConfig();
+  const pais = config?.pais;
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Contacto | null>(null);
   const [form, setForm] = useState<FormState>(BLANK);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"todos" | ContactoTipo>("todos");
   const [saving, setSaving] = useState(false);
+  const [cuitLoading, setCuitLoading] = useState(false);
 
   const { data: contactos, reload } = useTable("contactos", {
     orderBy: "nombre",
     ascending: true,
+    filter: paisFilter(pais),
+    skip: !pais,
+    deps: [pais],
   });
 
   const filtered = (contactos ?? []).filter((c) => {
@@ -89,6 +94,7 @@ export default function ContactosPage() {
     setSaving(true);
     try {
       const payload = {
+        ctx_pais: pais,
         tipo: form.tipo,
         nombre: form.nombre,
         tax_id: form.tax_id || null,
@@ -109,6 +115,23 @@ export default function ContactosPage() {
       alert("Error: " + (err as Error).message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function buscarCuit() {
+    const cuit = form.tax_id.replace(/\D/g, "");
+    if (cuit.length < 10) return;
+    setCuitLoading(true);
+    try {
+      const res = await fetch(`/api/cuit?cuit=${cuit}`);
+      if (!res.ok) throw new Error("No encontrado");
+      const data = await res.json();
+      if (data.razon_social) setForm((f) => ({ ...f, nombre: data.razon_social }));
+      else alert("CUIT no encontrado en el padrón.");
+    } catch {
+      alert("No se pudo consultar el CUIT. Verificá que sea correcto.");
+    } finally {
+      setCuitLoading(false);
     }
   }
 
@@ -277,12 +300,23 @@ export default function ContactosPage() {
               <label className="label">
                 {form.pais ? COUNTRIES[form.pais].taxIdLabel : "Identificación"}
               </label>
-              <input
-                className="input"
-                placeholder={form.pais ? COUNTRIES[form.pais].taxIdPlaceholder : ""}
-                value={form.tax_id}
-                onChange={(e) => setForm({ ...form, tax_id: e.target.value })}
-              />
+              <div className="flex gap-2 items-end">
+                <input
+                  className="input flex-1"
+                  placeholder={form.pais ? COUNTRIES[form.pais].taxIdPlaceholder : ""}
+                  value={form.tax_id}
+                  onChange={(e) => setForm({ ...form, tax_id: e.target.value })}
+                />
+                <button
+                  type="button"
+                  className="btn btn-secondary shrink-0"
+                  onClick={buscarCuit}
+                  disabled={cuitLoading || form.tax_id.replace(/\D/g, "").length < 10}
+                  title="Buscar razón social en AFIP (Argentina)"
+                >
+                  {cuitLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Buscar"}
+                </button>
+              </div>
             </div>
             <div>
               <label className="label">Teléfono</label>

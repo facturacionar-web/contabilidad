@@ -1,6 +1,6 @@
 "use client";
 import { useState, useMemo, useEffect } from "react";
-import { useTable } from "@/lib/useSupabaseData";
+import { useTable, paisFilter } from "@/lib/useSupabaseData";
 import { useConfig } from "@/lib/useConfig";
 import { CURRENCIES, CurrencyCode } from "@/lib/countries";
 import { formatMoney, todayISO } from "@/lib/format";
@@ -16,6 +16,7 @@ function firstDayOfMonth() {
 
 export default function ReportesPage() {
   const { config, country } = useConfig();
+  const pais = config?.pais;
   const [desde, setDesde] = useState(firstDayOfMonth());
   const [hasta, setHasta] = useState(todayISO());
   const [moneda, setMoneda] = useState<CurrencyCode>("MXN");
@@ -25,10 +26,10 @@ export default function ReportesPage() {
     if (config?.moneda_base) setMoneda(config.moneda_base);
   }, [config?.moneda_base]);
 
-  const { data: allIngresos } = useTable("ingresos", { orderBy: "fecha" });
-  const { data: allGastos } = useTable("gastos", { orderBy: "fecha" });
-  const { data: allNotas } = useTable("notas_credito", { orderBy: "fecha" });
-  const { data: contactos } = useTable("contactos", { orderBy: "nombre", ascending: true });
+  const { data: allIngresos } = useTable("ingresos", { orderBy: "fecha", filter: paisFilter(pais), skip: !pais, deps: [pais] });
+  const { data: allGastos } = useTable("gastos", { orderBy: "fecha", filter: paisFilter(pais), skip: !pais, deps: [pais] });
+  const { data: allNotas } = useTable("notas_credito", { orderBy: "fecha", filter: paisFilter(pais), skip: !pais, deps: [pais] });
+  const { data: contactos } = useTable("contactos", { orderBy: "nombre", ascending: true, filter: paisFilter(pais), skip: !pais, deps: [pais] });
 
   // Filter by date range in memory
   const ingresos = useMemo(

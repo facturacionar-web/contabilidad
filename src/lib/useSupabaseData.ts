@@ -22,13 +22,15 @@ export function useTable<K extends keyof TableMap>(
     ascending?: boolean;
     filter?: { column: string; op: "eq"; value: unknown }[];
     deps?: unknown[];
+    skip?: boolean;
   } = {}
 ) {
-  const { orderBy = "id", ascending = false, filter, deps = [] } = opts;
+  const { orderBy = "id", ascending = false, filter, deps = [], skip = false } = opts;
   const [data, setData] = useState<TableMap[K][] | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (skip) return;
     const supabase = createClient();
     let query = supabase.from(table).select("*");
     if (filter) {
@@ -44,7 +46,7 @@ export function useTable<K extends keyof TableMap>(
       setData(rows as TableMap[K][]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [table, orderBy, ascending, JSON.stringify(filter)]);
+  }, [table, orderBy, ascending, JSON.stringify(filter), skip]);
 
   useEffect(() => {
     load();
@@ -52,6 +54,11 @@ export function useTable<K extends keyof TableMap>(
   }, [load, ...deps]);
 
   return { data, error, reload: load };
+}
+
+/** Helper: filter para aislar datos por país */
+export function paisFilter(pais: string | null | undefined) {
+  return pais ? [{ column: "ctx_pais", op: "eq" as const, value: pais }] : undefined;
 }
 
 export async function insertRow<K extends keyof TableMap>(

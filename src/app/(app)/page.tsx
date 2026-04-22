@@ -1,5 +1,5 @@
 "use client";
-import { useTable } from "@/lib/useSupabaseData";
+import { useTable, paisFilter } from "@/lib/useSupabaseData";
 import { useConfig } from "@/lib/useConfig";
 import { formatMoney, formatDate, monthRange, todayISO } from "@/lib/format";
 import {
@@ -15,12 +15,13 @@ import PageHeader from "@/components/PageHeader";
 
 export default function Dashboard() {
   const { config, country } = useConfig();
+  const pais = config?.pais;
   const { start, end } = monthRange(todayISO());
 
-  const { data: ingresos } = useTable("ingresos", { orderBy: "fecha" });
-  const { data: gastos } = useTable("gastos", { orderBy: "fecha" });
-  const { data: notas } = useTable("notas_credito", { orderBy: "fecha" });
-  const { data: contactos } = useTable("contactos", { orderBy: "nombre", ascending: true });
+  const { data: ingresos } = useTable("ingresos", { orderBy: "fecha", filter: paisFilter(pais), skip: !pais, deps: [pais] });
+  const { data: gastos } = useTable("gastos", { orderBy: "fecha", filter: paisFilter(pais), skip: !pais, deps: [pais] });
+  const { data: notas } = useTable("notas_credito", { orderBy: "fecha", filter: paisFilter(pais), skip: !pais, deps: [pais] });
+  const { data: contactos } = useTable("contactos", { orderBy: "nombre", ascending: true, filter: paisFilter(pais), skip: !pais, deps: [pais] });
 
   const inRange = <T extends { fecha: string }>(rows: T[] | undefined) =>
     (rows ?? []).filter((r) => r.fecha >= start && r.fecha <= end);

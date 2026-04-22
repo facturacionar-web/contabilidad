@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { useTable, insertRow, updateRow, deleteRow } from "@/lib/useSupabaseData";
+import { useTable, insertRow, updateRow, deleteRow, paisFilter } from "@/lib/useSupabaseData";
 import type { Ingreso, IngresoTipo } from "@/lib/types";
 import { useConfig } from "@/lib/useConfig";
 import {
@@ -43,6 +43,7 @@ const BLANK: FormState = {
 
 export default function IngresosPage() {
   const { config, country } = useConfig();
+  const pais = config?.pais;
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Ingreso | null>(null);
   const [form, setForm] = useState<FormState>(BLANK);
@@ -50,8 +51,8 @@ export default function IngresosPage() {
   const [filter, setFilter] = useState<"todos" | IngresoTipo>("todos");
   const [saving, setSaving] = useState(false);
 
-  const { data: ingresos, reload } = useTable("ingresos", { orderBy: "fecha" });
-  const { data: contactos } = useTable("contactos", { orderBy: "nombre", ascending: true });
+  const { data: ingresos, reload } = useTable("ingresos", { orderBy: "fecha", filter: paisFilter(pais), skip: !pais, deps: [pais] });
+  const { data: contactos } = useTable("contactos", { orderBy: "nombre", ascending: true, filter: paisFilter(pais), skip: !pais, deps: [pais] });
 
   const filtered = (ingresos ?? []).filter((i) => {
     if (filter !== "todos" && i.tipo !== filter) return false;
@@ -92,6 +93,7 @@ export default function IngresosPage() {
     setSaving(true);
     try {
       const payload = {
+        ctx_pais: pais,
         fecha: form.fecha,
         tipo: form.tipo,
         contacto_id: form.contacto_id === "" ? null : Number(form.contacto_id),

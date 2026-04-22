@@ -1,6 +1,6 @@
 "use client";
 import { useState, useMemo } from "react";
-import { useTable, insertRow, updateRow, deleteRow } from "@/lib/useSupabaseData";
+import { useTable, insertRow, updateRow, deleteRow, paisFilter } from "@/lib/useSupabaseData";
 import type { Gasto, GastoTipo, GastoEstado } from "@/lib/types";
 import { useConfig } from "@/lib/useConfig";
 import {
@@ -53,6 +53,7 @@ function blank(moneda: CurrencyCode, ivaDefault: number): FormState {
 
 export default function GastosPage() {
   const { config, country } = useConfig();
+  const pais = config?.pais;
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Gasto | null>(null);
   const [form, setForm] = useState<FormState>(blank("MXN", 16));
@@ -61,8 +62,8 @@ export default function GastosPage() {
   const [filterEstado, setFilterEstado] = useState<"todos" | GastoEstado>("todos");
   const [saving, setSaving] = useState(false);
 
-  const { data: gastos, reload } = useTable("gastos", { orderBy: "fecha" });
-  const { data: contactos } = useTable("contactos", { orderBy: "nombre", ascending: true });
+  const { data: gastos, reload } = useTable("gastos", { orderBy: "fecha", filter: paisFilter(pais), skip: !pais, deps: [pais] });
+  const { data: contactos } = useTable("contactos", { orderBy: "nombre", ascending: true, filter: paisFilter(pais), skip: !pais, deps: [pais] });
   const proveedores = (contactos ?? []).filter(
     (c) => c.tipo === "proveedor" || c.tipo === "ambos"
   );
@@ -135,6 +136,7 @@ export default function GastosPage() {
           ? 0
           : form.monto_pagado;
       const payload = {
+        ctx_pais: pais,
         fecha: form.fecha,
         fecha_vencimiento: form.fecha_vencimiento || null,
         tipo: form.tipo,

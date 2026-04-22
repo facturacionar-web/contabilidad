@@ -5,6 +5,7 @@ export type ContactoTipo = "cliente" | "proveedor" | "ambos";
 export interface Contacto {
   id: number;
   user_id?: string;
+  ctx_pais?: string | null;
   tipo: ContactoTipo;
   nombre: string;
   tax_id?: string | null;
@@ -21,6 +22,7 @@ export type IngresoTipo = "ingreso_dinero" | "otro_ingreso";
 export interface Ingreso {
   id: number;
   user_id?: string;
+  ctx_pais?: string | null;
   fecha: string;
   tipo: IngresoTipo;
   contacto_id?: number | null;
@@ -40,6 +42,7 @@ export type GastoEstado = "pagado" | "pendiente" | "parcial";
 export interface Gasto {
   id: number;
   user_id?: string;
+  ctx_pais?: string | null;
   fecha: string;
   fecha_vencimiento?: string | null;
   tipo: GastoTipo;
@@ -64,6 +67,7 @@ export type NotaCreditoTipo = "emitida" | "recibida";
 export interface NotaCredito {
   id: number;
   user_id?: string;
+  ctx_pais?: string | null;
   fecha: string;
   tipo: NotaCreditoTipo;
   contacto_id?: number | null;
