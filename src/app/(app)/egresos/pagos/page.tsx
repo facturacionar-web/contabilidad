@@ -120,13 +120,15 @@ export default function PagosEgresosPage() {
 
   const proveedores = (contactos ?? []).filter(c => c.tipo === "proveedor" || c.tipo === "ambos");
 
-  // Facturas pendientes del proveedor seleccionado
+  // Facturas pendientes del proveedor seleccionado, filtradas por moneda del pago
   const facturasPendientes = useMemo(() => {
     if (form.contacto_id === "") return [];
     return (facturas ?? []).filter(f =>
-      f.contacto_id === Number(form.contacto_id) && f.estado !== "pagado"
+      f.contacto_id === Number(form.contacto_id) &&
+      f.estado !== "pagado" &&
+      f.moneda === form.moneda
     );
-  }, [facturas, form.contacto_id]);
+  }, [facturas, form.contacto_id, form.moneda]);
 
   // Sync facturas_pagadas when contacto changes
   useEffect(() => {
