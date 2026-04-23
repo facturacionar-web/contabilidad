@@ -130,8 +130,12 @@ export default function PagosEgresosPage() {
   useEffect(() => {
     if (editing) return;
     const preId = preselectedRef.current;
+    const preFactura = preId ? facturasPendientes.find(f => f.id === preId) : null;
+    const nuevaMoneda = (preFactura?.moneda ?? monedas[0] ?? base) as CurrencyCode;
     setForm(f => ({
       ...f,
+      moneda: nuevaMoneda,
+      tasa_cambio: nuevaMoneda === f.moneda ? f.tasa_cambio : 1,
       facturas_pagadas: facturasPendientes.map(fac => ({
         factura_id: fac.id,
         numero_factura: fac.numero_factura ?? null,
@@ -579,7 +583,20 @@ export default function PagosEgresosPage() {
           {/* Totals */}
           {(totals.neto > 0 || form.contacto_id !== "") && (
             <div className="flex justify-end">
-              <div className="space-y-1 text-sm w-64">
+              <div className="space-y-1 text-sm w-72">
+                {isForeign && (
+                  <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
+                    <span className="text-amber-800 text-sm">1 {form.moneda} =</span>
+                    <input
+                      type="number" step="0.01" min="0"
+                      className="input w-32 text-sm py-1 mx-2"
+                      placeholder="Tasa de cambio"
+                      value={form.tasa_cambio || ""}
+                      onChange={e => setForm(f => ({ ...f, tasa_cambio: parseFloat(e.target.value) || 0 }))}
+                    />
+                    <span className="text-amber-800 text-sm">{base}</span>
+                  </div>
+                )}
                 {form.contacto_id !== "" && totals.retenciones > 0 && (
                   <>
                     <div className="flex justify-between">
@@ -593,7 +610,7 @@ export default function PagosEgresosPage() {
                   </>
                 )}
                 <div className="flex justify-between pt-1 border-t border-[var(--border)]">
-                  <span className="font-semibold">Total a transferir {form.moneda}</span>
+                  <span className="font-semibold">Total {form.moneda}</span>
                   <span className="font-bold text-base text-red-600">{formatMoney(totals.neto, form.moneda, country.locale)}</span>
                 </div>
                 {isForeign && form.tasa_cambio > 0 && (
