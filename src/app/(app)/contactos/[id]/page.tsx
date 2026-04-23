@@ -368,7 +368,7 @@ export default function ContactoDashboardPage({
                     </td>
                     <td className="text-[var(--muted)]">{g.metodo_pago ?? "—"}</td>
                     <td className="text-right font-semibold text-red-600 whitespace-nowrap">
-                      -{formatMoney(Number(g.total), g.moneda, country.locale)}
+                      {formatMoney(Number(g.total), g.moneda, country.locale)}
                     </td>
                     <td className="text-right whitespace-nowrap">
                       <Link className="btn btn-ghost p-1.5" href={`/egresos/pagos?editar=${g.id}`} title="Editar pago">

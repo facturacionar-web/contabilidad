@@ -404,7 +404,7 @@ export default function PagosEgresosPage() {
                     <td className="text-[var(--muted)]">{(cuentas ?? []).find(c => c.id === g.cuenta_id)?.nombre ?? "—"}</td>
                     <td className="text-[var(--muted)]">{g.metodo_pago ?? "—"}</td>
                     <td className="text-right font-semibold text-red-600 whitespace-nowrap">
-                      -{formatMoney(Number(g.total), g.moneda, country.locale)}
+                      {formatMoney(Number(g.total), g.moneda, country.locale)}
                     </td>
                     <td className="text-right whitespace-nowrap">
                       <button className="btn btn-ghost p-1.5" onClick={() => openEdit(g)}><Pencil className="w-4 h-4" /></button>

@@ -187,6 +187,7 @@ export default function FacturasPage() {
     if (!form.numero_factura.trim()) { alert("El número de factura es obligatorio."); return; }
     if (form.contacto_id === "") { alert("El proveedor es obligatorio."); return; }
     if (!form.fecha_vencimiento) { alert("La fecha de vencimiento es obligatoria."); return; }
+    if (form.fecha_vencimiento < form.fecha) { alert("La fecha de vencimiento no puede ser anterior a la fecha de creación."); return; }
     if (form.items.some(it => !it.concepto_id || it.precio <= 0)) {
       alert("Todos los ítems deben tener concepto y precio.");
       return;
@@ -356,7 +357,7 @@ export default function FacturasPage() {
                   <td className="whitespace-nowrap text-[var(--muted)]">{formatDate(g.fecha, country.locale)}</td>
                   <td className="whitespace-nowrap text-[var(--muted)]">{g.fecha_vencimiento ? formatDate(g.fecha_vencimiento, country.locale) : "—"}</td>
                   <td>{estadoBadge(g.estado)}</td>
-                  <td className="text-right font-semibold text-red-600 whitespace-nowrap">-{formatMoney(Number(g.total), g.moneda, country.locale)}</td>
+                  <td className="text-right font-semibold text-red-600 whitespace-nowrap">{formatMoney(Number(g.total), g.moneda, country.locale)}</td>
                   <td className="text-right text-[var(--muted)] whitespace-nowrap">
                     {formatMoney(cashPaidByFactura[g.id] ?? 0, g.moneda, country.locale)}
                   </td>
@@ -474,7 +475,7 @@ export default function FacturasPage() {
                 </div>
                 <div>
                   <label className="label">Vencimiento *</label>
-                  <input type="date" className="input" value={form.fecha_vencimiento} onChange={e => setForm({ ...form, fecha_vencimiento: e.target.value })} />
+                  <input type="date" className="input" min={form.fecha} value={form.fecha_vencimiento} onChange={e => setForm({ ...form, fecha_vencimiento: e.target.value })} />
                 </div>
               </div>
             </div>
