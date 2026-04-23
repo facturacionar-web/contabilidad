@@ -2,7 +2,6 @@
 import { useState } from "react";
 import { useTable, insertRow, updateRow, deleteRow, paisFilter } from "@/lib/useSupabaseData";
 import type { NotaCredito, GastoEstado } from "@/lib/types";
-import { createClient } from "@/lib/supabase/client";
 import { useConfig } from "@/lib/useConfig";
 import { CURRENCIES, CurrencyCode, monedasDisponibles } from "@/lib/countries";
 import { formatMoney, formatDate, todayISO } from "@/lib/format";
@@ -119,11 +118,9 @@ export default function NotasCreditoPage() {
         motivo: "",
         notas: form.notas || null,
       };
-      const supabase = createClient();
-
       // Si estamos editando y tenía factura vinculada, revertir el crédito anterior
       if (editing?.gasto_relacionado_id) {
-        const { data: fac } = await supabase.from("gastos").select("*").eq("id", editing.gasto_relacionado_id).single();
+        const fac = (gastos ?? []).find(g => g.id === editing.gasto_relacionado_id);
         if (fac) {
           const revertido = Math.max(0, Math.round((Number(fac.monto_pagado) - Number(editing.monto)) * 100) / 100);
           const total = Math.round(Number(fac.total) * 100) / 100;
@@ -140,7 +137,7 @@ export default function NotasCreditoPage() {
 
       // Aplicar el crédito a la factura vinculada
       if (payload.gasto_relacionado_id) {
-        const { data: fac } = await supabase.from("gastos").select("*").eq("id", payload.gasto_relacionado_id).single();
+        const fac = (gastos ?? []).find(g => g.id === payload.gasto_relacionado_id);
         if (fac) {
           const nuevo_pagado = Math.min(
             Math.round((Number(fac.monto_pagado) + form.monto) * 100) / 100,
@@ -165,8 +162,7 @@ export default function NotasCreditoPage() {
     if (!confirm("¿Eliminar esta nota de crédito?")) return;
     try {
       if (n.gasto_relacionado_id) {
-        const supabase = createClient();
-        const { data: fac } = await supabase.from("gastos").select("*").eq("id", n.gasto_relacionado_id).single();
+        const fac = (gastos ?? []).find(g => g.id === n.gasto_relacionado_id);
         if (fac) {
           const revertido = Math.max(0, Math.round((Number(fac.monto_pagado) - Number(n.monto)) * 100) / 100);
           const total = Math.round(Number(fac.total) * 100) / 100;
