@@ -1,51 +1,39 @@
 "use client";
 import { useState } from "react";
 import { useTable, insertRow, updateRow, deleteRow, paisFilter } from "@/lib/useSupabaseData";
-import type { NotaCredito, NotaCreditoTipo } from "@/lib/types";
+import type { NotaCredito } from "@/lib/types";
 import { useConfig } from "@/lib/useConfig";
 import { CURRENCIES, CurrencyCode, monedasDisponibles } from "@/lib/countries";
 import { formatMoney, formatDate, todayISO } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
 import Modal from "@/components/Modal";
 import EmptyState from "@/components/EmptyState";
+import Link from "next/link";
 import { Plus, FileMinus, Pencil, Trash2, Search } from "lucide-react";
 
 type FormState = {
   fecha: string;
-  tipo: NotaCreditoTipo;
   contacto_id: number | "";
   numero: string;
   gasto_relacionado_id: number | "";
-  concepto: string;
+  concepto_id: string;
   monto: number;
   moneda: CurrencyCode;
-  motivo: string;
   notas: string;
 };
 
 function blank(moneda: CurrencyCode): FormState {
   return {
     fecha: todayISO(),
-    tipo: "recibida",
     contacto_id: "",
     numero: "",
     gasto_relacionado_id: "",
-    concepto: "",
+    concepto_id: "",
     monto: 0,
     moneda,
-    motivo: "",
     notas: "",
   };
 }
-
-const MOTIVOS = [
-  "Devolución de mercancía",
-  "Descuento aplicado",
-  "Error en facturación",
-  "Anulación parcial",
-  "Bonificación",
-  "Otro",
-];
 
 export default function NotasCreditoPage() {
   const { config, country } = useConfig();
@@ -56,7 +44,6 @@ export default function NotasCreditoPage() {
   const [editing, setEditing] = useState<NotaCredito | null>(null);
   const [form, setForm] = useState<FormState>(blank("MXN"));
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<"todos" | NotaCreditoTipo>("todos");
   const [saving, setSaving] = useState(false);
 
   const { data: notas, reload } = useTable("notas_credito", {
@@ -68,14 +55,19 @@ export default function NotasCreditoPage() {
   const { data: gastos } = useTable("gastos", {
     orderBy: "fecha", filter: paisFilter(pais), skip: !pais, deps: [pais],
   });
+  const { data: conceptosAll } = useTable("conceptos", {
+    orderBy: "nombre", ascending: true, filter: paisFilter(pais), skip: !pais, deps: [pais],
+  });
+
+  const proveedores = (contactos ?? []).filter(c => c.tipo === "proveedor" || c.tipo === "ambos");
+  const conceptos = (conceptosAll ?? []).filter(c => c.tipo === "egreso" || c.tipo === "ambos");
+  const facturas = (gastos ?? []).filter(g => g.tipo === "factura_proveedor");
 
   const filtered = (notas ?? []).filter((n) => {
-    if (filter !== "todos" && n.tipo !== filter) return false;
     if (!search) return true;
     const q = search.toLowerCase();
     return (
       n.concepto.toLowerCase().includes(q) ||
-      n.motivo.toLowerCase().includes(q) ||
       (n.numero?.toLowerCase() ?? "").includes(q)
     );
   });
@@ -93,14 +85,12 @@ export default function NotasCreditoPage() {
     setEditing(n);
     setForm({
       fecha: n.fecha,
-      tipo: n.tipo,
       contacto_id: n.contacto_id ?? "",
       numero: n.numero ?? "",
       gasto_relacionado_id: n.gasto_relacionado_id ?? "",
-      concepto: n.concepto,
+      concepto_id: "",
       monto: Number(n.monto),
       moneda: n.moneda,
-      motivo: n.motivo,
       notas: n.notas ?? "",
     });
     setOpen(true);
@@ -108,21 +98,24 @@ export default function NotasCreditoPage() {
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.concepto.trim() || form.monto <= 0) return;
+    if (!form.concepto_id || form.monto <= 0) {
+      alert("El concepto y el monto son obligatorios.");
+      return;
+    }
     setSaving(true);
     try {
+      const conceptoNombre = conceptos.find(c => c.id === form.concepto_id)?.nombre ?? "";
       const payload = {
         ctx_pais: pais,
         fecha: form.fecha,
-        tipo: form.tipo,
+        tipo: "recibida" as const,
         contacto_id: form.contacto_id === "" ? null : Number(form.contacto_id),
         numero: form.numero || null,
-        gasto_relacionado_id:
-          form.gasto_relacionado_id === "" ? null : Number(form.gasto_relacionado_id),
-        concepto: form.concepto,
+        gasto_relacionado_id: form.gasto_relacionado_id === "" ? null : Number(form.gasto_relacionado_id),
+        concepto: conceptoNombre,
         monto: form.monto,
         moneda: form.moneda,
-        motivo: form.motivo,
+        motivo: "",
         notas: form.notas || null,
       };
       if (editing) {
@@ -149,20 +142,17 @@ export default function NotasCreditoPage() {
     }
   }
 
-  const totalPorTipo = (notas ?? []).reduce<Record<string, Record<string, number>>>(
-    (acc, n) => {
-      acc[n.tipo] = acc[n.tipo] ?? {};
-      acc[n.tipo][n.moneda] = (acc[n.tipo][n.moneda] ?? 0) + Number(n.monto);
-      return acc;
-    },
-    {}
-  );
+  const totalRecibidas = (notas ?? []).reduce<Record<string, number>>((acc, n) => {
+    if (n.tipo !== "recibida") return acc;
+    acc[n.moneda] = (acc[n.moneda] ?? 0) + Number(n.monto);
+    return acc;
+  }, {});
 
   return (
     <>
       <PageHeader
         title="Notas de crédito"
-        description="Notas emitidas a clientes y recibidas de proveedores"
+        description="Notas de crédito recibidas de proveedores"
         action={
           <button className="btn btn-primary" onClick={openNew}>
             <Plus className="w-4 h-4" /> Nueva nota
@@ -170,65 +160,24 @@ export default function NotasCreditoPage() {
         }
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-        <div className="card">
-          <p className="text-sm text-[var(--muted)] mb-2">Emitidas (a clientes)</p>
-          {Object.keys(totalPorTipo.emitida ?? {}).length === 0 ? (
-            <p className="text-[var(--muted)] text-sm">Sin registros</p>
-          ) : (
-            <div className="flex flex-wrap gap-3">
-              {Object.entries(totalPorTipo.emitida ?? {}).map(([cur, t]) => (
-                <div key={cur}>
-                  <p className="text-xs text-[var(--muted)]">{cur}</p>
-                  <p className="text-lg font-semibold">
-                    {formatMoney(t, cur as CurrencyCode, country.locale)}
-                  </p>
-                </div>
-              ))}
+      {Object.keys(totalRecibidas).length > 0 && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+          {Object.entries(totalRecibidas).map(([cur, t]) => (
+            <div key={cur} className="card py-3">
+              <p className="text-xs text-[var(--muted)]">Total recibidas {cur}</p>
+              <p className="text-lg font-semibold text-teal-600">{formatMoney(t, cur as CurrencyCode, country.locale)}</p>
             </div>
-          )}
+          ))}
         </div>
-        <div className="card">
-          <p className="text-sm text-[var(--muted)] mb-2">Recibidas (de proveedores)</p>
-          {Object.keys(totalPorTipo.recibida ?? {}).length === 0 ? (
-            <p className="text-[var(--muted)] text-sm">Sin registros</p>
-          ) : (
-            <div className="flex flex-wrap gap-3">
-              {Object.entries(totalPorTipo.recibida ?? {}).map(([cur, t]) => (
-                <div key={cur}>
-                  <p className="text-xs text-[var(--muted)]">{cur}</p>
-                  <p className="text-lg font-semibold">
-                    {formatMoney(t, cur as CurrencyCode, country.locale)}
-                  </p>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+      )}
 
       <div className="card p-0 overflow-hidden">
-        <div className="px-5 py-4 border-b border-[var(--border)] flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
-          <div className="flex gap-1">
-            {(["todos", "emitida", "recibida"] as const).map((f) => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                  filter === f
-                    ? "bg-[var(--primary-soft)] text-[var(--primary-hover)]"
-                    : "text-[var(--muted)] hover:bg-slate-100"
-                }`}
-              >
-                {f === "todos" ? "Todas" : f === "emitida" ? "Emitidas" : "Recibidas"}
-              </button>
-            ))}
-          </div>
+        <div className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between">
           <div className="relative">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
             <input
               className="input pl-9 sm:w-72"
-              placeholder="Buscar por concepto, motivo o número"
+              placeholder="Buscar por concepto o número…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -239,7 +188,7 @@ export default function NotasCreditoPage() {
           <EmptyState
             icon={<FileMinus className="w-6 h-6" />}
             title={notas?.length ? "Sin resultados" : "Aún no hay notas de crédito"}
-            description="Registrá devoluciones, descuentos o anulaciones parciales."
+            description="Registrá notas de crédito recibidas de proveedores."
             action={
               !notas?.length && (
                 <button className="btn btn-primary" onClick={openNew}>
@@ -253,41 +202,44 @@ export default function NotasCreditoPage() {
             <thead>
               <tr>
                 <th>Fecha</th>
-                <th>Tipo</th>
                 <th>Número</th>
                 <th>Concepto</th>
-                <th>Contacto</th>
-                <th>Motivo</th>
+                <th>Proveedor</th>
+                <th>Factura relacionada</th>
                 <th className="text-right">Monto</th>
                 <th className="text-right">Acciones</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((n) => (
-                <tr key={n.id}>
-                  <td className="whitespace-nowrap">{formatDate(n.fecha, country.locale)}</td>
-                  <td>
-                    <span className={`badge ${n.tipo === "emitida" ? "badge-info" : "badge-warning"}`}>
-                      {n.tipo === "emitida" ? "Emitida" : "Recibida"}
-                    </span>
-                  </td>
-                  <td className="text-[var(--muted)]">{n.numero || "—"}</td>
-                  <td className="font-medium max-w-xs truncate">{n.concepto}</td>
-                  <td className="text-[var(--muted)]">{contactoName(n.contacto_id)}</td>
-                  <td className="text-[var(--muted)]">{n.motivo}</td>
-                  <td className="text-right font-semibold whitespace-nowrap">
-                    {formatMoney(Number(n.monto), n.moneda, country.locale)}
-                  </td>
-                  <td className="text-right whitespace-nowrap">
-                    <button className="btn btn-ghost p-1.5" onClick={() => openEdit(n)}>
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    <button className="btn btn-ghost p-1.5 text-red-600" onClick={() => remove(n)}>
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {filtered.map((n) => {
+                const facturaRel = facturas.find(g => g.id === n.gasto_relacionado_id);
+                return (
+                  <tr key={n.id}>
+                    <td className="whitespace-nowrap">{formatDate(n.fecha, country.locale)}</td>
+                    <td className="text-[var(--muted)]">{n.numero || "—"}</td>
+                    <td className="font-medium max-w-xs truncate">{n.concepto}</td>
+                    <td className="text-[var(--muted)]">
+                      {n.contacto_id
+                        ? <Link href={`/contactos/${n.contacto_id}`} className="hover:underline hover:text-[var(--primary)]">{contactoName(n.contacto_id)}</Link>
+                        : "—"}
+                    </td>
+                    <td className="text-[var(--muted)]">
+                      {facturaRel ? `${facturaRel.numero_factura ?? `#${facturaRel.id}`} — ${formatMoney(Number(facturaRel.total), facturaRel.moneda, country.locale)}` : "—"}
+                    </td>
+                    <td className="text-right font-semibold whitespace-nowrap">
+                      {formatMoney(Number(n.monto), n.moneda, country.locale)}
+                    </td>
+                    <td className="text-right whitespace-nowrap">
+                      <button className="btn btn-ghost p-1.5" onClick={() => openEdit(n)}>
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button className="btn btn-ghost p-1.5 text-red-600" onClick={() => remove(n)}>
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -300,7 +252,7 @@ export default function NotasCreditoPage() {
         size="lg"
       >
         <form onSubmit={save} className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="label">Fecha *</label>
               <input
@@ -310,17 +262,6 @@ export default function NotasCreditoPage() {
                 onChange={(e) => setForm({ ...form, fecha: e.target.value })}
                 required
               />
-            </div>
-            <div>
-              <label className="label">Tipo *</label>
-              <select
-                className="select"
-                value={form.tipo}
-                onChange={(e) => setForm({ ...form, tipo: e.target.value as NotaCreditoTipo })}
-              >
-                <option value="recibida">Recibida (de proveedor)</option>
-                <option value="emitida">Emitida (a cliente)</option>
-              </select>
             </div>
             <div>
               <label className="label">Número</label>
@@ -334,26 +275,31 @@ export default function NotasCreditoPage() {
 
           <div>
             <label className="label">Concepto *</label>
-            <input
-              className="input"
-              value={form.concepto}
-              onChange={(e) => setForm({ ...form, concepto: e.target.value })}
+            <select
+              className="select"
+              value={form.concepto_id}
+              onChange={(e) => setForm({ ...form, concepto_id: e.target.value })}
               required
-            />
+            >
+              <option value="">— Seleccionar concepto —</option>
+              {conceptos.map((c) => (
+                <option key={c.id} value={c.id}>{c.nombre}</option>
+              ))}
+            </select>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="label">Contacto</label>
+              <label className="label">Proveedor</label>
               <select
                 className="select"
                 value={form.contacto_id}
                 onChange={(e) =>
-                  setForm({ ...form, contacto_id: e.target.value === "" ? "" : Number(e.target.value) })
+                  setForm({ ...form, contacto_id: e.target.value === "" ? "" : Number(e.target.value), gasto_relacionado_id: "" })
                 }
               >
-                <option value="">— Sin contacto —</option>
-                {contactos?.map((c) => (
+                <option value="">— Sin proveedor —</option>
+                {proveedores.map((c) => (
                   <option key={c.id} value={c.id}>{c.nombre}</option>
                 ))}
               </select>
@@ -364,24 +310,22 @@ export default function NotasCreditoPage() {
                 className="select"
                 value={form.gasto_relacionado_id}
                 onChange={(e) =>
-                  setForm({
-                    ...form,
-                    gasto_relacionado_id: e.target.value === "" ? "" : Number(e.target.value),
-                  })
+                  setForm({ ...form, gasto_relacionado_id: e.target.value === "" ? "" : Number(e.target.value) })
                 }
               >
                 <option value="">— Ninguna —</option>
-                {gastos?.map((g) => (
-                  <option key={g.id} value={g.id}>
-                    {g.numero_factura ? `#${g.numero_factura} — ` : ""}
-                    {g.concepto} ({formatDate(g.fecha, country.locale)})
-                  </option>
-                ))}
+                {facturas
+                  .filter(g => form.contacto_id === "" || g.contacto_id === Number(form.contacto_id))
+                  .map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.numero_factura ?? `#${g.id}`} — {formatMoney(Number(g.total), g.moneda, country.locale)}{g.fecha_vencimiento ? ` — vence ${formatDate(g.fecha_vencimiento, country.locale)}` : ""}
+                    </option>
+                  ))}
               </select>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="label">Monto *</label>
               <input
@@ -403,20 +347,6 @@ export default function NotasCreditoPage() {
               >
                 {monedas.map((code) => (
                   <option key={code} value={code}>{code} — {CURRENCIES[code].name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="label">Motivo *</label>
-              <select
-                className="select"
-                value={form.motivo}
-                onChange={(e) => setForm({ ...form, motivo: e.target.value })}
-                required
-              >
-                <option value="">— Elegir —</option>
-                {MOTIVOS.map((m) => (
-                  <option key={m} value={m}>{m}</option>
                 ))}
               </select>
             </div>
