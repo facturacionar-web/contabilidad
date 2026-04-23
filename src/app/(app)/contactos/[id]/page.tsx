@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   useTable,
+  updateRow,
   deleteRow,
   paisFilter,
 } from "@/lib/useSupabaseData";
+import { createClient } from "@/lib/supabase/client";
 import type { Gasto, GastoEstado } from "@/lib/types";
 import { useConfig } from "@/lib/useConfig";
 import { CurrencyCode } from "@/lib/countries";
@@ -102,6 +104,18 @@ export default function ContactoDashboardPage({
   async function removeGasto(g: Gasto) {
     if (!confirm("¿Eliminar este registro?")) return;
     try {
+      if (g.tipo === "gasto") {
+        const supabase = createClient();
+        const fps = g.factura_pagos ?? [];
+        for (const fp of fps) {
+          const { data: factura } = await supabase.from("gastos").select("*").eq("id", fp.factura_id).single();
+          if (!factura) continue;
+          const nuevo_pagado = Math.max(0, Math.round((Number(factura.monto_pagado) - Number(fp.monto)) * 100) / 100);
+          const total_factura = Math.round(Number(factura.total) * 100) / 100;
+          const nuevo_estado: GastoEstado = nuevo_pagado <= 0 ? "pendiente" : nuevo_pagado >= total_factura ? "pagado" : "parcial";
+          await updateRow("gastos", fp.factura_id, { monto_pagado: nuevo_pagado, estado: nuevo_estado });
+        }
+      }
       await deleteRow("gastos", g.id);
       await reload();
     } catch (err) {
@@ -333,6 +347,9 @@ export default function ContactoDashboardPage({
                       -{formatMoney(Number(g.total), g.moneda, country.locale)}
                     </td>
                     <td className="text-right whitespace-nowrap">
+                      <Link className="btn btn-ghost p-1.5" href={`/egresos/pagos?editar=${g.id}`} title="Editar pago">
+                        <Pencil className="w-4 h-4" />
+                      </Link>
                       <button className="btn btn-ghost p-1.5 text-red-600" onClick={() => removeGasto(g)}>
                         <Trash2 className="w-4 h-4" />
                       </button>

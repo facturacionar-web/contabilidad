@@ -89,6 +89,7 @@ export default function PagosEgresosPage() {
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
   const autoOpenedRef = useRef(false);
+  const autoEditedRef = useRef(false);
   const [preselectedFacturaId, setPreselectedFacturaId] = useState<number | null>(null);
   const preselectedRef = useRef<number | null>(null);
   const [showAllFacturas, setShowAllFacturas] = useState(false);
@@ -185,6 +186,20 @@ export default function PagosEgresosPage() {
     router.replace(qs ? `/egresos/pagos?${qs}` : "/egresos/pagos");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pais, searchParams]);
+
+  useEffect(() => {
+    if (autoEditedRef.current || !pais || !pagos || !searchParams.get("editar")) return;
+    const editId = Number(searchParams.get("editar"));
+    const pago = pagos.find(p => p.id === editId);
+    if (!pago) return;
+    autoEditedRef.current = true;
+    openEdit(pago);
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("editar");
+    const qs = params.toString();
+    router.replace(qs ? `/egresos/pagos?${qs}` : "/egresos/pagos");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pais, pagos, searchParams]);
 
   function openEdit(g: Gasto) {
     setEditing(g);
@@ -288,10 +303,12 @@ export default function PagosEgresosPage() {
       for (const fp of fpData) {
         const factura = (facturas ?? []).find(f => f.id === fp.factura_id);
         if (!factura) continue;
-        const nuevo_pagado = Number(factura.monto_pagado) + fp.monto;
-        const nuevo_estado: GastoEstado = nuevo_pagado >= Number(factura.total) ? "pagado" : "parcial";
+        const raw = Number(factura.monto_pagado) + fp.monto;
+        const nuevo_pagado = Math.round(raw * 100) / 100;
+        const total_factura = Math.round(Number(factura.total) * 100) / 100;
+        const nuevo_estado: GastoEstado = nuevo_pagado >= total_factura ? "pagado" : "parcial";
         await updateRow("gastos", fp.factura_id, {
-          monto_pagado: Math.min(nuevo_pagado, Number(factura.total)),
+          monto_pagado: Math.min(nuevo_pagado, total_factura),
           estado: nuevo_estado,
         });
       }
