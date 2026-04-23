@@ -2,6 +2,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useTable, insertRow, updateRow, deleteRow, paisFilter } from "@/lib/useSupabaseData";
+import { createClient } from "@/lib/supabase/client";
 import type { Gasto, GastoEstado, FacturaPago, Retencion } from "@/lib/types";
 import { useConfig } from "@/lib/useConfig";
 import { CURRENCIES, CurrencyCode, PAYMENT_METHODS, monedasDisponibles } from "@/lib/countries";
@@ -306,8 +307,20 @@ export default function PagosEgresosPage() {
 
   async function remove(g: Gasto) {
     if (!confirm("¿Eliminar este pago?")) return;
-    try { await deleteRow("gastos", g.id); await reload(); }
-    catch (err) { alert("Error: " + (err as Error).message); }
+    try {
+      const supabase = createClient();
+      const fps = g.factura_pagos ?? [];
+      for (const fp of fps) {
+        const { data: factura } = await supabase.from("gastos").select("*").eq("id", fp.factura_id).single();
+        if (!factura) continue;
+        const nuevo_pagado = Math.max(0, Number(factura.monto_pagado) - Number(fp.monto));
+        const nuevo_estado: GastoEstado =
+          nuevo_pagado <= 0 ? "pendiente" : nuevo_pagado >= Number(factura.total) ? "pagado" : "parcial";
+        await updateRow("gastos", fp.factura_id, { monto_pagado: nuevo_pagado, estado: nuevo_estado });
+      }
+      await deleteRow("gastos", g.id);
+      await reload();
+    } catch (err) { alert("Error: " + (err as Error).message); }
   }
 
   return (
