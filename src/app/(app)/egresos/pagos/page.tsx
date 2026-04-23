@@ -22,6 +22,7 @@ type FPLocal = {
   numero_factura: string | null;
   total_factura: number;
   monto_pagado_antes: number;
+  credito_aplicado: number;
   monto: number;
   moneda: CurrencyCode;
   retenciones: RetLocal[];
@@ -58,6 +59,7 @@ function pagoToForm(g: Gasto, facturas: Gasto[]): FormState {
     total_factura: Number(fp.total_factura),
     monto_pagado_antes: Number(fp.monto_pagado_antes),
     monto: Number(fp.monto),
+    credito_aplicado: 0,
     moneda: (facturas.find(f => f.id === fp.factura_id)?.moneda ?? g.moneda) as CurrencyCode,
     retenciones: (fp.retenciones ?? []).map((r, j) => ({ key: `${i}-${j}`, tipo: r.tipo, monto: Number(r.monto) })),
     showRet: (fp.retenciones ?? []).length > 0,
@@ -117,8 +119,21 @@ export default function PagosEgresosPage() {
   const { data: cuentas } = useTable("cuentas", {
     orderBy: "nombre", ascending: true, filter: paisFilter(pais), skip: !pais, deps: [pais],
   });
+  const { data: notasCredito } = useTable("notas_credito", {
+    orderBy: "fecha", filter: paisFilter(pais), skip: !pais, deps: [pais],
+  });
 
   const proveedores = (contactos ?? []).filter(c => c.tipo === "proveedor" || c.tipo === "ambos");
+
+  const creditosAplicados = useMemo(() => {
+    const map: Record<number, number> = {};
+    (notasCredito ?? []).forEach(n => {
+      if (n.gasto_relacionado_id) {
+        map[n.gasto_relacionado_id] = (map[n.gasto_relacionado_id] ?? 0) + Number(n.monto);
+      }
+    });
+    return map;
+  }, [notasCredito]);
 
   // Facturas pendientes del proveedor seleccionado, filtradas por moneda del pago
   const facturasPendientes = useMemo(() => {
@@ -145,7 +160,10 @@ export default function PagosEgresosPage() {
         numero_factura: fac.numero_factura ?? null,
         total_factura: Number(fac.total),
         monto_pagado_antes: Number(fac.monto_pagado),
-        monto: preId && fac.id === preId ? Number(fac.total) - Number(fac.monto_pagado) : 0,
+        credito_aplicado: creditosAplicados[fac.id] ?? 0,
+        monto: preId && fac.id === preId
+          ? Math.max(0, Number(fac.total) - Number(fac.monto_pagado) - (creditosAplicados[fac.id] ?? 0))
+          : 0,
         moneda: fac.moneda as CurrencyCode,
         retenciones: [] as RetLocal[],
         showRet: false,
@@ -312,10 +330,11 @@ export default function PagosEgresosPage() {
       for (const fp of fpData) {
         const factura = (facturas ?? []).find(f => f.id === fp.factura_id);
         if (!factura) continue;
-        const raw = Number(factura.monto_pagado) + fp.monto;
-        const nuevo_pagado = Math.round(raw * 100) / 100;
+        const nuevo_pagado = Math.round((Number(factura.monto_pagado) + fp.monto) * 100) / 100;
         const total_factura = Math.round(Number(factura.total) * 100) / 100;
-        const nuevo_estado: GastoEstado = nuevo_pagado >= total_factura ? "pagado" : "parcial";
+        const credito = Math.round((creditosAplicados[fp.factura_id] ?? 0) * 100) / 100;
+        const total_cubierto = Math.round((nuevo_pagado + credito) * 100) / 100;
+        const nuevo_estado: GastoEstado = total_cubierto >= total_factura ? "pagado" : "parcial";
         await updateRow("gastos", fp.factura_id, {
           monto_pagado: Math.min(nuevo_pagado, total_factura),
           estado: nuevo_estado,
@@ -339,9 +358,13 @@ export default function PagosEgresosPage() {
       for (const fp of fps) {
         const { data: factura } = await supabase.from("gastos").select("*").eq("id", fp.factura_id).single();
         if (!factura) continue;
-        const nuevo_pagado = Math.max(0, Number(factura.monto_pagado) - Number(fp.monto));
+        const nuevo_pagado = Math.max(0, Math.round((Number(factura.monto_pagado) - Number(fp.monto)) * 100) / 100);
+        const total_factura = Math.round(Number(factura.total) * 100) / 100;
+        const { data: ncRows } = await supabase.from("notas_credito").select("monto").eq("gasto_relacionado_id", fp.factura_id);
+        const credito = Math.round(((ncRows ?? []).reduce((s, n) => s + Number(n.monto), 0)) * 100) / 100;
+        const total_cubierto = Math.round((nuevo_pagado + credito) * 100) / 100;
         const nuevo_estado: GastoEstado =
-          nuevo_pagado <= 0 ? "pendiente" : nuevo_pagado >= Number(factura.total) ? "pagado" : "parcial";
+          total_cubierto <= 0 ? "pendiente" : total_cubierto >= total_factura ? "pagado" : "parcial";
         await updateRow("gastos", fp.factura_id, { monto_pagado: nuevo_pagado, estado: nuevo_estado });
       }
       await deleteRow("gastos", g.id);
@@ -522,7 +545,7 @@ export default function PagosEgresosPage() {
               ) : (
                 <div className="divide-y divide-[var(--border)]">
                   {displayedFacturas.map(fp => {
-                    const porPagar = fp.total_factura - fp.monto_pagado_antes;
+                    const porPagar = Math.max(0, fp.total_factura - fp.monto_pagado_antes - fp.credito_aplicado);
                     const totalRet = fp.retenciones.reduce((s, r) => s + r.monto, 0);
                     return (
                       <div key={fp.factura_id} className="px-4 py-3 space-y-2">
@@ -539,6 +562,12 @@ export default function PagosEgresosPage() {
                             <p className="text-xs text-[var(--muted)]">Pagado</p>
                             <p className="text-sm">{formatMoney(fp.monto_pagado_antes, fp.moneda, country.locale)}</p>
                           </div>
+                          {fp.credito_aplicado > 0 && (
+                            <div>
+                              <p className="text-xs text-[var(--muted)]">Nota crédito</p>
+                              <p className="text-sm text-teal-600">-{formatMoney(fp.credito_aplicado, fp.moneda, country.locale)}</p>
+                            </div>
+                          )}
                           <div>
                             <p className="text-xs text-[var(--muted)]">Por pagar</p>
                             <p className="text-sm font-medium text-amber-600">{formatMoney(porPagar, fp.moneda, country.locale)}</p>

@@ -61,7 +61,7 @@ export default function NotasCreditoPage() {
 
   const proveedores = (contactos ?? []).filter(c => c.tipo === "proveedor" || c.tipo === "ambos");
   const conceptos = (conceptosAll ?? []).filter(c => c.tipo === "egreso" || c.tipo === "ambos");
-  const facturas = (gastos ?? []).filter(g => g.tipo === "factura_proveedor");
+  const facturas = (gastos ?? []).filter(g => g.tipo === "factura_proveedor" && g.estado !== "pagado");
 
   const filtered = (notas ?? []).filter((n) => {
     if (!search) return true;
