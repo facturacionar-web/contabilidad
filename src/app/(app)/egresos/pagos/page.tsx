@@ -278,6 +278,7 @@ export default function PagosEgresosPage() {
 
   async function handleSave() {
     if (!form.cuenta_id) { alert("La cuenta bancaria es obligatoria."); return; }
+    if (totals.neto <= 0) { alert("El monto total del pago debe ser mayor a cero."); return; }
     setSaving(true);
     try {
       const { neto } = totals;
