@@ -200,19 +200,25 @@ export default function FacturasPage() {
         items: itemsData,
       };
 
+      let facturaId: number;
       if (editing) {
         await updateRow("gastos", editing.id, payload);
+        facturaId = editing.id;
       } else {
-        await insertRow("gastos", payload);
+        const inserted = await insertRow("gastos", payload);
+        facturaId = inserted.id;
       }
       await reload();
 
       if (mode === "new") {
         setEditing(null);
         setForm(blank(form.moneda));
-      } else if (mode === "pay" && form.contacto_id !== "") {
+      } else if (mode === "pay") {
         setOpen(false);
-        router.push(`/contactos/${form.contacto_id}?tab=pagos`);
+        const qs = form.contacto_id !== ""
+          ? `?nuevo=1&proveedor=${form.contacto_id}&factura=${facturaId}`
+          : `?nuevo=1&factura=${facturaId}`;
+        router.push(`/egresos/pagos${qs}`);
       } else {
         setOpen(false);
       }

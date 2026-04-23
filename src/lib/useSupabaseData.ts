@@ -68,16 +68,19 @@ export function paisFilter(pais: string | null | undefined) {
 export async function insertRow<K extends keyof TableMap>(
   table: K,
   row: Partial<TableMap[K]>
-) {
+): Promise<TableMap[K]> {
   const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) throw new Error("No autenticado");
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from(table)
-    .insert({ ...row, user_id: user.id } as never);
+    .insert({ ...row, user_id: user.id } as never)
+    .select()
+    .single();
   if (error) throw new Error(error.message);
+  return data as TableMap[K];
 }
 
 export async function updateRow<K extends keyof TableMap>(
