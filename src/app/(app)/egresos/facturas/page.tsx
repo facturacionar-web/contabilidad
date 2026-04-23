@@ -156,6 +156,18 @@ export default function FacturasPage() {
   }
 
   async function handleSave(mode: "save" | "new" | "pay") {
+    if (form.numero_factura && form.contacto_id !== "") {
+      const duplicada = (gastos ?? []).find(g =>
+        g.tipo === "factura_proveedor" &&
+        g.contacto_id === Number(form.contacto_id) &&
+        g.numero_factura === form.numero_factura &&
+        g.id !== editing?.id
+      );
+      if (duplicada) {
+        alert(`Ya existe una factura N° ${form.numero_factura} para este proveedor.`);
+        return;
+      }
+    }
     setSaving(true);
     try {
       const { subtotal, iva_monto, total } = totals;
