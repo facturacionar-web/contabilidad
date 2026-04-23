@@ -101,6 +101,26 @@ export default function ContactoDashboardPage({
     .filter((n) => n.moneda === base && !n.gasto_relacionado_id)
     .reduce((s, n) => s + Number(n.monto), 0);
 
+  const cashPaidByFactura = useMemo(() => {
+    const map: Record<number, number> = {};
+    for (const pago of pagos) {
+      for (const fp of (pago.factura_pagos ?? [])) {
+        map[fp.factura_id] = Math.round(((map[fp.factura_id] ?? 0) + Number(fp.monto)) * 100) / 100;
+      }
+    }
+    return map;
+  }, [pagos]);
+
+  const creditByFactura = useMemo(() => {
+    const map: Record<number, number> = {};
+    for (const nota of notasRecibidas) {
+      if (nota.gasto_relacionado_id) {
+        map[nota.gasto_relacionado_id] = Math.round(((map[nota.gasto_relacionado_id] ?? 0) + Number(nota.monto)) * 100) / 100;
+      }
+    }
+    return map;
+  }, [notasRecibidas]);
+
   async function removeGasto(g: Gasto) {
     if (!confirm("¿Eliminar este registro?")) return;
     try {
@@ -241,6 +261,7 @@ export default function ContactoDashboardPage({
                   <th>Estado</th>
                   <th className="text-right">Total</th>
                   <th className="text-right">Pagado</th>
+                  <th className="text-right">Por pagar</th>
                   <th className="text-right">Acciones</th>
                 </tr>
               </thead>
@@ -261,8 +282,11 @@ export default function ContactoDashboardPage({
                       {formatMoney(Number(g.total), g.moneda, country.locale)}
                     </td>
                     <td className="text-right text-[var(--muted)] whitespace-nowrap">
+                      {formatMoney(cashPaidByFactura[g.id] ?? 0, g.moneda, country.locale)}
+                    </td>
+                    <td className="text-right font-medium text-amber-600 whitespace-nowrap">
                       {formatMoney(
-                        Number(g.monto_pagado),
+                        Math.max(0, Math.round((Number(g.total) - (cashPaidByFactura[g.id] ?? 0) - (creditByFactura[g.id] ?? 0)) * 100) / 100),
                         g.moneda,
                         country.locale
                       )}
