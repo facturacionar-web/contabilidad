@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useTable, insertRow, updateRow, deleteRow, paisFilter } from "@/lib/useSupabaseData";
 import { createClient } from "@/lib/supabase/client";
-import type { Gasto, GastoEstado, FacturaPago, Retencion } from "@/lib/types";
+import type { Gasto, GastoEstado, FacturaPago, Retencion, FacturaItem } from "@/lib/types";
 import { useConfig } from "@/lib/useConfig";
 import { CURRENCIES, CurrencyCode, PAYMENT_METHODS, monedasDisponibles } from "@/lib/countries";
 import { formatMoney, formatDate, todayISO } from "@/lib/format";
@@ -17,6 +17,8 @@ const TIPOS_RETENCION = ["Ganancias", "IIBB", "Otro"];
 
 // ── Local types ────────────────────────────────────────────────────────────
 type RetLocal = { key: string; tipo: string; monto: number };
+
+type DirectLine = { key: string; concepto_id: string; monto: number };
 
 type FPLocal = {
   factura_id: number;
@@ -37,9 +39,8 @@ type FormState = {
   moneda: CurrencyCode;
   tasa_cambio: number;
   nota: string;
-  concepto_id: string;
-  monto_directo: number;
   facturas_pagadas: FPLocal[];
+  lineas_directas: DirectLine[];
 };
 
 let _rkey = 0;
@@ -48,7 +49,9 @@ const nextRKey = () => String(++_rkey);
 function blank(moneda: CurrencyCode): FormState {
   return {
     fecha: todayISO(), contacto_id: "", cuenta_id: "", metodo_pago: PAYMENT_METHODS[0],
-    moneda, tasa_cambio: 1, nota: "", concepto_id: "", monto_directo: 0, facturas_pagadas: [],
+    moneda, tasa_cambio: 1, nota: "",
+    facturas_pagadas: [],
+    lineas_directas: [{ key: nextRKey(), concepto_id: "", monto: 0 }],
   };
 }
 
@@ -63,7 +66,10 @@ function pagoToForm(g: Gasto, facturas: Gasto[], conceptos: { id: string; nombre
     retenciones: (fp.retenciones ?? []).map((r, j) => ({ key: `${i}-${j}`, tipo: r.tipo, monto: Number(r.monto) })),
     showRet: (fp.retenciones ?? []).length > 0,
   }));
-  const concepto_id = g.concepto_id ?? conceptos.find(c => c.nombre === g.concepto)?.id ?? "";
+  const rawItems = (g as unknown as { items?: FacturaItem[] }).items;
+  const lineas_directas: DirectLine[] = rawItems?.length
+    ? rawItems.map((it, i) => ({ key: String(i), concepto_id: it.concepto_id ?? "", monto: Number(it.precio) }))
+    : [{ key: "0", concepto_id: g.concepto_id ?? conceptos.find(c => c.nombre === g.concepto)?.id ?? "", monto: fps.length === 0 ? Number(g.total) : 0 }];
   return {
     fecha: g.fecha,
     contacto_id: g.contacto_id ?? "",
@@ -72,9 +78,8 @@ function pagoToForm(g: Gasto, facturas: Gasto[], conceptos: { id: string; nombre
     moneda: g.moneda,
     tasa_cambio: g.tasa_cambio ?? 1,
     nota: g.notas ?? "",
-    concepto_id,
-    monto_directo: fps.length === 0 ? Number(g.total) : 0,
     facturas_pagadas: fps,
+    lineas_directas,
   };
 }
 
@@ -168,13 +173,12 @@ export default function PagosEgresosPage() {
 
   const isForeign = form.moneda !== base;
 
-  const hasInvoiceAmounts = form.facturas_pagadas.some(fp => fp.monto > 0);
-
   const totals = useMemo(() => {
-    const aplicado = form.facturas_pagadas.reduce((s, fp) => s + fp.monto, 0);
+    const aplicadoFacturas = form.facturas_pagadas.reduce((s, fp) => s + fp.monto, 0);
     const retenciones = form.facturas_pagadas.reduce((s, fp) => s + fp.retenciones.reduce((sr, r) => sr + r.monto, 0), 0);
-    const neto = aplicado > 0 ? aplicado - retenciones : form.monto_directo;
-    return { aplicado, retenciones, neto, neto_base: neto * (form.tasa_cambio || 1) };
+    const aplicadoLineas = form.lineas_directas.reduce((s, l) => s + l.monto, 0);
+    const neto = aplicadoFacturas - retenciones + aplicadoLineas;
+    return { aplicadoFacturas, retenciones, aplicadoLineas, neto, neto_base: neto * (form.tasa_cambio || 1) };
   }, [form]);
 
   function openNew(proveedorId?: number, facturaId?: number) {
@@ -251,6 +255,16 @@ export default function PagosEgresosPage() {
       ),
     }));
   }
+  function addLinea() {
+    setForm(f => ({ ...f, lineas_directas: [...f.lineas_directas, { key: nextRKey(), concepto_id: "", monto: 0 }] }));
+  }
+  function removeLinea(key: string) {
+    setForm(f => ({ ...f, lineas_directas: f.lineas_directas.filter(l => l.key !== key) }));
+  }
+  function updateLinea(key: string, patch: Partial<DirectLine>) {
+    setForm(f => ({ ...f, lineas_directas: f.lineas_directas.map(l => l.key === key ? { ...l, ...patch } : l) }));
+  }
+
   function updateRetencion(factura_id: number, rkey: string, patch: Partial<RetLocal>) {
     setForm(f => ({
       ...f,
@@ -278,10 +292,25 @@ export default function PagosEgresosPage() {
         retenciones: fp.retenciones.map(r => ({ tipo: r.tipo, monto: r.monto }) as Retencion),
       }));
 
-      const conceptoNombre = conceptos.find(c => c.id === form.concepto_id)?.nombre ?? "Pago";
-      const concepto = fpData.length > 0
-        ? `${conceptoNombre} — ${fpData.map(fp => fp.numero_factura ?? `#${fp.factura_id}`).join(", ")}`
-        : conceptoNombre;
+      const lineasActivas = form.lineas_directas.filter(l => l.monto > 0);
+      const lineaNombres = lineasActivas.map(l => conceptos.find(c => c.id === l.concepto_id)?.nombre ?? "Varios");
+      const primerConceptoId = lineasActivas[0] ? (lineasActivas[0].concepto_id || null) : null;
+      const concepto = fpData.length > 0 && lineasActivas.length === 0
+        ? fpData.map(fp => fp.numero_factura ?? `#${fp.factura_id}`).join(", ")
+        : lineaNombres.length > 0 ? lineaNombres.join(", ") : "Pago";
+
+      const itemsData: FacturaItem[] = lineasActivas.map(l => ({
+        concepto_id: l.concepto_id || null,
+        concepto_nombre: conceptos.find(c => c.id === l.concepto_id)?.nombre ?? "",
+        precio: l.monto,
+        descuento: 0,
+        impuesto: 0,
+        cantidad: 1,
+        observaciones: "",
+        neto: l.monto,
+        iva_monto: 0,
+        total: l.monto,
+      }));
 
       const payload = {
         ctx_pais: pais,
@@ -290,8 +319,9 @@ export default function PagosEgresosPage() {
         contacto_id: form.contacto_id === "" ? null : Number(form.contacto_id),
         cuenta_id: form.cuenta_id || null,
         concepto,
-        categoria: conceptoNombre,
-        concepto_id: form.concepto_id || null,
+        categoria: lineaNombres[0] ?? concepto,
+        concepto_id: primerConceptoId,
+        items: itemsData.length > 0 ? itemsData : null,
         subtotal: neto,
         iva: 0,
         iva_monto: 0,
@@ -478,23 +508,6 @@ export default function PagosEgresosPage() {
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="label">Concepto</label>
-              <select className="select" value={form.concepto_id} onChange={e => setForm(f => ({ ...f, concepto_id: e.target.value }))}>
-                <option value="">— Seleccionar concepto —</option>
-                {conceptos.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-              </select>
-            </div>
-            {!hasInvoiceAmounts && (
-              <div>
-                <label className="label">Monto *</label>
-                <input type="number" step="0.01" min="0" className="input" value={form.monto_directo || ""}
-                  onChange={e => setForm(f => ({ ...f, monto_directo: parseFloat(e.target.value) || 0 }))} />
-              </div>
-            )}
-          </div>
-
           <div>
             <label className="label">Nota de egreso</label>
             <textarea className="textarea" rows={2} value={form.nota} onChange={e => setForm(f => ({ ...f, nota: e.target.value }))} />
@@ -594,10 +607,52 @@ export default function PagosEgresosPage() {
             </div>
           )}
 
+          {/* Líneas directas */}
+          <div className="border border-[var(--border)] rounded-lg overflow-hidden">
+            <div className="bg-slate-50 px-4 py-2.5 border-b border-[var(--border)]">
+              <p className="font-medium text-sm">Valores directos</p>
+              <p className="text-xs text-[var(--muted)]">Montos no asociados a facturas pendientes</p>
+            </div>
+            <div className="divide-y divide-[var(--border)]">
+              {form.lineas_directas.map(l => (
+                <div key={l.key} className="flex items-center gap-3 px-4 py-2.5">
+                  <select
+                    className="select flex-1 text-sm py-1"
+                    value={l.concepto_id}
+                    onChange={e => updateLinea(l.key, { concepto_id: e.target.value })}
+                  >
+                    <option value="">— Concepto —</option>
+                    {conceptos.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                  </select>
+                  <input
+                    type="number" step="0.01" min="0"
+                    className="input w-40 text-sm py-1"
+                    placeholder="0.00"
+                    value={l.monto || ""}
+                    onChange={e => updateLinea(l.key, { monto: parseFloat(e.target.value) || 0 })}
+                  />
+                  <button
+                    type="button"
+                    className="text-[var(--muted)] hover:text-red-500 disabled:opacity-30"
+                    onClick={() => removeLinea(l.key)}
+                    disabled={form.lineas_directas.length === 1}
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="px-4 py-2 border-t border-[var(--border)] bg-slate-50/50">
+              <button type="button" className="text-sm text-[var(--primary)] hover:underline flex items-center gap-1 font-medium" onClick={addLinea}>
+                <Plus className="w-3.5 h-3.5" /> Agregar línea
+              </button>
+            </div>
+          </div>
+
           {/* Totals */}
-          {(totals.neto > 0 || form.contacto_id !== "") && (
+          {totals.neto > 0 && (
             <div className="flex justify-end">
-              <div className="space-y-1 text-sm w-72">
+              <div className="space-y-1 text-sm w-80">
                 {isForeign && (
                   <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
                     <span className="text-amber-800 text-sm">1 {form.moneda} =</span>
@@ -611,18 +666,26 @@ export default function PagosEgresosPage() {
                     <span className="text-amber-800 text-sm">{base}</span>
                   </div>
                 )}
-                {form.contacto_id !== "" && totals.retenciones > 0 && (
+                {totals.aplicadoFacturas > 0 && (
                   <>
                     <div className="flex justify-between">
-                      <span className="text-[var(--muted)]">Total aplicado a facturas</span>
-                      <span>{formatMoney(totals.aplicado, form.moneda, country.locale)}</span>
+                      <span className="text-[var(--muted)]">Subtotal facturas</span>
+                      <span>{formatMoney(totals.aplicadoFacturas, form.moneda, country.locale)}</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-[var(--muted)]">Total retenciones</span>
-                      <span className="text-amber-600">-{formatMoney(totals.retenciones, form.moneda, country.locale)}</span>
-                    </div>
+                    {totals.retenciones > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-[var(--muted)]">Retenciones</span>
+                        <span className="text-amber-600">-{formatMoney(totals.retenciones, form.moneda, country.locale)}</span>
+                      </div>
+                    )}
                   </>
                 )}
+                {form.lineas_directas.filter(l => l.monto > 0).map(l => (
+                  <div key={l.key} className="flex justify-between">
+                    <span className="text-[var(--muted)]">{conceptos.find(c => c.id === l.concepto_id)?.nombre ?? "Varios"}</span>
+                    <span>{formatMoney(l.monto, form.moneda, country.locale)}</span>
+                  </div>
+                ))}
                 <div className="flex justify-between pt-1 border-t border-[var(--border)]">
                   <span className="font-semibold">Total {form.moneda}</span>
                   <span className="font-bold text-base text-red-600">{formatMoney(totals.neto, form.moneda, country.locale)}</span>
