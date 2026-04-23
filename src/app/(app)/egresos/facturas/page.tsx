@@ -10,7 +10,7 @@ import PageHeader from "@/components/PageHeader";
 import Modal from "@/components/Modal";
 import EmptyState from "@/components/EmptyState";
 import Link from "next/link";
-import { Plus, Receipt, Pencil, Trash2, Search, CheckCircle2, X } from "lucide-react";
+import { Plus, Receipt, Pencil, Trash2, Search, CreditCard, X } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type LineItem = {
@@ -229,11 +229,6 @@ export default function FacturasPage() {
     catch (err) { alert("Error: " + (err as Error).message); }
   }
 
-  async function marcarPagado(g: Gasto) {
-    try { await updateRow("gastos", g.id, { estado: "pagado", monto_pagado: Number(g.total) }); await reload(); }
-    catch (err) { alert("Error: " + (err as Error).message); }
-  }
-
   const estadoBadge = (e: GastoEstado) => {
     const map: Record<GastoEstado, string> = { pagado: "badge-success", pendiente: "badge-danger", parcial: "badge-warning" };
     const label: Record<GastoEstado, string> = { pagado: "Pagado", pendiente: "Pendiente", parcial: "Parcial" };
@@ -302,7 +297,13 @@ export default function FacturasPage() {
                   <td className="text-right font-semibold text-red-600 whitespace-nowrap">-{formatMoney(Number(g.total), g.moneda, country.locale)}</td>
                   <td className="text-right whitespace-nowrap">
                     {g.estado !== "pagado" && (
-                      <button className="btn btn-ghost p-1.5 text-green-600" onClick={() => marcarPagado(g)} title="Marcar pagado"><CheckCircle2 className="w-4 h-4" /></button>
+                      <Link
+                        className="btn btn-ghost p-1.5 text-blue-600"
+                        href={g.contacto_id ? `/egresos/pagos?nuevo=1&proveedor=${g.contacto_id}&factura=${g.id}` : `/egresos/pagos?nuevo=1&factura=${g.id}`}
+                        title="Agregar pago"
+                      >
+                        <CreditCard className="w-4 h-4" />
+                      </Link>
                     )}
                     <button className="btn btn-ghost p-1.5" onClick={() => openEdit(g)}><Pencil className="w-4 h-4" /></button>
                     <button className="btn btn-ghost p-1.5 text-red-600" onClick={() => remove(g)}><Trash2 className="w-4 h-4" /></button>

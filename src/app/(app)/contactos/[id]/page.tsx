@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   useTable,
-  updateRow,
   deleteRow,
   paisFilter,
 } from "@/lib/useSupabaseData";
@@ -21,7 +20,6 @@ import {
   CreditCard,
   Pencil,
   Trash2,
-  CheckCircle2,
   FileMinus,
 } from "lucide-react";
 
@@ -100,18 +98,6 @@ export default function ContactoDashboardPage({
   const notasPorAplicar = notasRecibidas
     .filter((n) => n.moneda === base)
     .reduce((s, n) => s + Number(n.monto), 0);
-
-  async function marcarPagado(g: Gasto) {
-    try {
-      await updateRow("gastos", g.id, {
-        estado: "pagado",
-        monto_pagado: Number(g.total),
-      });
-      await reload();
-    } catch (err) {
-      alert("Error: " + (err as Error).message);
-    }
-  }
 
   async function removeGasto(g: Gasto) {
     if (!confirm("¿Eliminar este registro?")) return;
@@ -269,22 +255,13 @@ export default function ContactoDashboardPage({
                     </td>
                     <td className="text-right whitespace-nowrap">
                       {g.estado !== "pagado" && (
-                        <>
-                          <Link
-                            className="btn btn-ghost p-1.5 text-blue-600"
-                            href={`/egresos/pagos?nuevo=1&proveedor=${contactoId}&factura=${g.id}`}
-                            title="Pagar factura"
-                          >
-                            <CreditCard className="w-4 h-4" />
-                          </Link>
-                          <button
-                            className="btn btn-ghost p-1.5 text-green-600"
-                            onClick={() => marcarPagado(g)}
-                            title="Marcar pagado"
-                          >
-                            <CheckCircle2 className="w-4 h-4" />
-                          </button>
-                        </>
+                        <Link
+                          className="btn btn-ghost p-1.5 text-blue-600"
+                          href={`/egresos/pagos?nuevo=1&proveedor=${contactoId}&factura=${g.id}`}
+                          title="Agregar pago"
+                        >
+                          <CreditCard className="w-4 h-4" />
+                        </Link>
                       )}
                       <Link
                         className="btn btn-ghost p-1.5"
