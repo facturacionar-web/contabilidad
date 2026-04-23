@@ -9,6 +9,7 @@ import PageHeader from "@/components/PageHeader";
 import Modal from "@/components/Modal";
 import EmptyState from "@/components/EmptyState";
 import { Plus, TrendingUp, Pencil, Trash2, Search } from "lucide-react";
+import Link from "next/link";
 
 type FormState = {
   fecha: string;
@@ -226,7 +227,9 @@ export default function PagosRecibidosPage() {
                     {conceptosAll?.find((c) => c.id === i.concepto_id)?.nombre ?? i.categoria ?? "—"}
                   </td>
                   <td className="text-[var(--muted)]">
-                    {contactos?.find((c) => c.id === i.contacto_id)?.nombre ?? "—"}
+                    {i.contacto_id
+                      ? <Link href={`/contactos/${i.contacto_id}`} className="hover:underline hover:text-[var(--primary)]">{contactos?.find(c => c.id === i.contacto_id)?.nombre ?? `#${i.contacto_id}`}</Link>
+                      : "—"}
                   </td>
                   <td className="text-[var(--muted)]">
                     {cuentas?.find((c) => c.id === i.cuenta_id)?.nombre ?? "—"}

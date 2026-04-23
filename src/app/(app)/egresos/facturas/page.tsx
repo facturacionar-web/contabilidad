@@ -315,7 +315,11 @@ export default function FacturasPage() {
                   <td className="whitespace-nowrap">{formatDate(g.fecha, country.locale)}</td>
                   <td className="text-[var(--muted)]">{g.numero_factura || "—"}</td>
                   <td className="font-medium max-w-xs truncate">{g.concepto}</td>
-                  <td className="text-[var(--muted)]">{contactos?.find(c => c.id === g.contacto_id)?.nombre ?? "—"}</td>
+                  <td className="text-[var(--muted)]">
+                    {g.contacto_id
+                      ? <Link href={`/contactos/${g.contacto_id}`} className="hover:underline hover:text-[var(--primary)]">{contactos?.find(c => c.id === g.contacto_id)?.nombre ?? `#${g.contacto_id}`}</Link>
+                      : "—"}
+                  </td>
                   <td>{estadoBadge(g.estado)}</td>
                   <td className="text-right font-semibold text-red-600 whitespace-nowrap">-{formatMoney(Number(g.total), g.moneda, country.locale)}</td>
                   <td className="text-right whitespace-nowrap">

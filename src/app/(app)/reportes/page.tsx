@@ -6,6 +6,7 @@ import { CURRENCIES, CurrencyCode } from "@/lib/countries";
 import { formatMoney, todayISO } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
 import { Download, TrendingUp, TrendingDown, Wallet } from "lucide-react";
+import Link from "next/link";
 
 function firstDayOfMonth() {
   const d = new Date();
@@ -70,13 +71,16 @@ export default function ReportesPage() {
   }, [gastosMoneda]);
 
   const porProveedor = useMemo(() => {
-    const map: Record<string, number> = {};
+    const map: Record<number, { nombre: string; total: number }> = {};
     gastosMoneda.forEach((g) => {
       if (!g.contacto_id) return;
-      const name = contactos?.find((c) => c.id === g.contacto_id)?.nombre ?? "—";
-      map[name] = (map[name] ?? 0) + Number(g.total);
+      const nombre = contactos?.find((c) => c.id === g.contacto_id)?.nombre ?? "—";
+      if (!map[g.contacto_id]) map[g.contacto_id] = { nombre, total: 0 };
+      map[g.contacto_id].total += Number(g.total);
     });
-    return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    return Object.entries(map)
+      .map(([id, { nombre, total }]) => [nombre, total, Number(id)] as [string, number, number])
+      .sort((a, b) => b[1] - a[1]).slice(0, 10);
   }, [gastosMoneda, contactos]);
 
   const maxIngCat = Math.max(...porCategoriaIngresos.map(([, v]) => v), 1);
@@ -258,7 +262,8 @@ export default function ReportesPage() {
 
       <BarCard
         title="Top proveedores (por gasto)"
-        rows={porProveedor}
+        rows={porProveedor.map(([n, v]) => [n, v])}
+        hrefs={porProveedor.map(([, , id]) => `/contactos/${id}`)}
         max={maxProv}
         moneda={moneda}
         locale={country.locale}
@@ -314,6 +319,7 @@ function BarCard({
   moneda,
   locale,
   barClass,
+  hrefs,
 }: {
   title: string;
   rows: [string, number][];
@@ -321,6 +327,7 @@ function BarCard({
   moneda: CurrencyCode;
   locale: string;
   barClass: string;
+  hrefs?: string[];
 }) {
   return (
     <div className="card">
@@ -331,10 +338,12 @@ function BarCard({
         </p>
       ) : (
         <div className="space-y-3">
-          {rows.map(([label, value]) => (
+          {rows.map(([label, value], i) => (
             <div key={label}>
               <div className="flex justify-between text-sm mb-1">
-                <span className="truncate max-w-[70%]">{label}</span>
+                {hrefs?.[i]
+                  ? <Link href={hrefs[i]} className="truncate max-w-[70%] hover:underline hover:text-[var(--primary)]">{label}</Link>
+                  : <span className="truncate max-w-[70%]">{label}</span>}
                 <span className="font-medium">
                   {formatMoney(value, moneda, locale)}
                 </span>

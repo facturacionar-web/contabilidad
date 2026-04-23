@@ -395,7 +395,11 @@ export default function PagosEgresosPage() {
                         </p>
                       )}
                     </td>
-                    <td className="text-[var(--muted)]">{contactos?.find(c => c.id === g.contacto_id)?.nombre ?? "—"}</td>
+                    <td className="text-[var(--muted)]">
+                      {g.contacto_id
+                        ? <Link href={`/contactos/${g.contacto_id}`} className="hover:underline hover:text-[var(--primary)]">{contactos?.find(c => c.id === g.contacto_id)?.nombre ?? `#${g.contacto_id}`}</Link>
+                        : "—"}
+                    </td>
                     <td className="text-[var(--muted)]">{(cuentas ?? []).find(c => c.id === g.cuenta_id)?.nombre ?? "—"}</td>
                     <td className="text-[var(--muted)]">{g.metodo_pago ?? "—"}</td>
                     <td className="text-right font-semibold text-red-600 whitespace-nowrap">
