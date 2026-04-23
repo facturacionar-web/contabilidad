@@ -1,5 +1,6 @@
 "use client";
 import { useState, useMemo, useEffect, useRef } from "react";
+import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useTable, insertRow, updateRow, deleteRow, paisFilter } from "@/lib/useSupabaseData";
 import { createClient } from "@/lib/supabase/client";
