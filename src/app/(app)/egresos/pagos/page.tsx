@@ -617,7 +617,7 @@ export default function PagosEgresosPage() {
               {form.lineas_directas.map(l => (
                 <div key={l.key} className="flex items-center gap-3 px-4 py-2.5">
                   <select
-                    className="select min-w-0 flex-1 text-sm py-1"
+                    className="select w-64 text-sm py-1"
                     value={l.concepto_id}
                     onChange={e => updateLinea(l.key, { concepto_id: e.target.value })}
                   >
@@ -626,7 +626,7 @@ export default function PagosEgresosPage() {
                   </select>
                   <input
                     type="number" step="0.01" min="0"
-                    className="input w-32 shrink-0 text-sm py-1"
+                    className="input w-36 text-sm py-1"
                     placeholder="0.00"
                     value={l.monto || ""}
                     onChange={e => updateLinea(l.key, { monto: parseFloat(e.target.value) || 0 })}
