@@ -94,6 +94,14 @@ export default function FacturasPage() {
     filter: [...(paisFilter(pais) ?? []), { column: "tipo", op: "eq", value: "factura_proveedor" }],
     skip: !pais, deps: [pais],
   });
+  const { data: pagosData } = useTable("gastos", {
+    orderBy: "fecha",
+    filter: [...(paisFilter(pais) ?? []), { column: "tipo", op: "eq", value: "gasto" }],
+    skip: !pais, deps: [pais],
+  });
+  const { data: notasData } = useTable("notas_credito", {
+    orderBy: "fecha", filter: paisFilter(pais), skip: !pais, deps: [pais],
+  });
   const { data: contactos } = useTable("contactos", {
     orderBy: "nombre", ascending: true, filter: paisFilter(pais), skip: !pais, deps: [pais],
   });
@@ -118,6 +126,26 @@ export default function FacturasPage() {
     const total_base = total * (form.tasa_cambio || 1);
     return { subtotal, iva_monto, total, total_base };
   }, [form.items, form.tasa_cambio]);
+
+  const cashPaidByFactura = useMemo(() => {
+    const map: Record<number, number> = {};
+    for (const pago of (pagosData ?? [])) {
+      for (const fp of (pago.factura_pagos ?? [])) {
+        map[fp.factura_id] = Math.round(((map[fp.factura_id] ?? 0) + Number(fp.monto)) * 100) / 100;
+      }
+    }
+    return map;
+  }, [pagosData]);
+
+  const creditByFactura = useMemo(() => {
+    const map: Record<number, number> = {};
+    for (const nota of (notasData ?? []).filter(n => n.tipo === "recibida")) {
+      if (nota.gasto_relacionado_id) {
+        map[nota.gasto_relacionado_id] = Math.round(((map[nota.gasto_relacionado_id] ?? 0) + Number(nota.monto)) * 100) / 100;
+      }
+    }
+    return map;
+  }, [notasData]);
 
   const totalPorMoneda = (gastos ?? []).reduce<Record<string, { total: number; pendiente: number }>>((acc, g) => {
     if (!acc[g.moneda]) acc[g.moneda] = { total: 0, pendiente: 0 };
@@ -306,7 +334,10 @@ export default function FacturasPage() {
             <thead>
               <tr>
                 <th>Fecha</th><th>N° Factura</th><th>Descripción</th><th>Proveedor</th><th>Estado</th>
-                <th className="text-right">Total</th><th className="text-right">Acciones</th>
+                <th className="text-right">Total</th>
+                <th className="text-right">Pagado</th>
+                <th className="text-right">Por pagar</th>
+                <th className="text-right">Acciones</th>
               </tr>
             </thead>
             <tbody>
@@ -322,6 +353,15 @@ export default function FacturasPage() {
                   </td>
                   <td>{estadoBadge(g.estado)}</td>
                   <td className="text-right font-semibold text-red-600 whitespace-nowrap">-{formatMoney(Number(g.total), g.moneda, country.locale)}</td>
+                  <td className="text-right text-[var(--muted)] whitespace-nowrap">
+                    {formatMoney(cashPaidByFactura[g.id] ?? 0, g.moneda, country.locale)}
+                  </td>
+                  <td className="text-right font-medium text-amber-600 whitespace-nowrap">
+                    {formatMoney(
+                      Math.max(0, Math.round((Number(g.total) - (cashPaidByFactura[g.id] ?? 0) - (creditByFactura[g.id] ?? 0)) * 100) / 100),
+                      g.moneda, country.locale
+                    )}
+                  </td>
                   <td className="text-right whitespace-nowrap">
                     {g.estado !== "pagado" && (
                       <Link
