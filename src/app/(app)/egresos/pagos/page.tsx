@@ -155,6 +155,13 @@ export default function PagosEgresosPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.contacto_id, facturasPendientes.length]);
 
+  const pagoNumbers = useMemo(() => {
+    const sorted = [...(pagos ?? [])].sort((a, b) => a.fecha.localeCompare(b.fecha));
+    const map: Record<number, number> = {};
+    sorted.forEach((g, i) => { map[g.id] = i + 1; });
+    return map;
+  }, [pagos]);
+
   const filtered = (pagos ?? []).filter(g => {
     if (!search) return true;
     const q = search.toLowerCase();
@@ -374,10 +381,11 @@ export default function PagosEgresosPage() {
             action={!pagos?.length && <button className="btn btn-primary" onClick={() => openNew()}><Plus className="w-4 h-4" /> Nuevo pago</button>}
           />
         ) : (
-          <table className="table">
+          <table className="table text-sm">
             <thead>
               <tr>
-                <th>Fecha</th><th>Descripción</th><th>Proveedor</th>
+                <th className="text-center w-10">#</th>
+                <th>Fecha</th><th>Detalle</th><th>Proveedor</th>
                 <th>Cuenta</th><th>Método</th>
                 <th className="text-right">Monto</th><th className="text-right">Acciones</th>
               </tr>
@@ -387,14 +395,13 @@ export default function PagosEgresosPage() {
                 const fps = g.factura_pagos ?? [];
                 return (
                   <tr key={g.id}>
+                    <td className="text-center text-[var(--muted)] font-medium">{pagoNumbers[g.id] ?? "—"}</td>
                     <td className="whitespace-nowrap">{formatDate(g.fecha, country.locale)}</td>
                     <td className="max-w-xs">
-                      <p className="font-medium truncate">{g.concepto}</p>
-                      {fps.length > 0 && (
-                        <p className="text-xs text-[var(--muted)]">
-                          Facturas: {fps.map(fp => fp.numero_factura ?? `#${fp.factura_id}`).join(", ")}
-                        </p>
-                      )}
+                      {fps.length > 0
+                        ? <span>{fps.map(fp => fp.numero_factura ?? `#${fp.factura_id}`).join(", ")}</span>
+                        : <span className="text-[var(--muted)]">{g.concepto}</span>
+                      }
                     </td>
                     <td className="text-[var(--muted)]">
                       {g.contacto_id

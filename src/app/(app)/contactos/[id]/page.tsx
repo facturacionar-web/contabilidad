@@ -101,6 +101,13 @@ export default function ContactoDashboardPage({
     .filter((n) => n.moneda === base && !n.gasto_relacionado_id)
     .reduce((s, n) => s + Number(n.monto), 0);
 
+  const pagoNumbers = useMemo(() => {
+    const allPagos = [...(gastos ?? [])].filter(g => g.tipo === "gasto").sort((a, b) => a.fecha.localeCompare(b.fecha));
+    const map: Record<number, number> = {};
+    allPagos.forEach((g, i) => { map[g.id] = i + 1; });
+    return map;
+  }, [gastos]);
+
   const cashPaidByFactura = useMemo(() => {
     const map: Record<number, number> = {};
     for (const pago of pagos) {
@@ -334,13 +341,14 @@ export default function ContactoDashboardPage({
             }
           />
         ) : (
-          <table className="table">
+          <table className="table text-sm">
             <thead>
               <tr>
+                <th className="text-center w-10">#</th>
                 <th>Fecha</th>
-                <th>Facturas pagadas</th>
+                <th>Detalle</th>
                 <th>Método</th>
-                <th className="text-right">Monto transferido</th>
+                <th className="text-right">Monto</th>
                 <th className="text-right">Acciones</th>
               </tr>
             </thead>
@@ -349,12 +357,13 @@ export default function ContactoDashboardPage({
                 const fps = g.factura_pagos ?? [];
                 return (
                   <tr key={g.id}>
+                    <td className="text-center text-[var(--muted)] font-medium">{pagoNumbers[g.id] ?? "—"}</td>
                     <td className="whitespace-nowrap">{formatDate(g.fecha, country.locale)}</td>
                     <td className="max-w-xs">
                       {fps.length > 0 ? (
                         <div className="space-y-0.5">
                           {fps.map((fp, i) => (
-                            <div key={i} className="text-sm">
+                            <div key={i}>
                               <span className="font-medium">{fp.numero_factura ?? `#${fp.factura_id}`}</span>
                               <span className="text-[var(--muted)] ml-2">{formatMoney(fp.monto, g.moneda, country.locale)}</span>
                               {fp.retenciones?.length > 0 && (
