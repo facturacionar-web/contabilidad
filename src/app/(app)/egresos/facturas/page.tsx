@@ -156,17 +156,22 @@ export default function FacturasPage() {
   }
 
   async function handleSave(mode: "save" | "new" | "pay") {
-    if (form.numero_factura && form.contacto_id !== "") {
-      const duplicada = (gastos ?? []).find(g =>
-        g.tipo === "factura_proveedor" &&
-        g.contacto_id === Number(form.contacto_id) &&
-        g.numero_factura === form.numero_factura &&
-        g.id !== editing?.id
-      );
-      if (duplicada) {
-        alert(`Ya existe una factura N° ${form.numero_factura} para este proveedor.`);
-        return;
-      }
+    if (!form.numero_factura.trim()) { alert("El número de factura es obligatorio."); return; }
+    if (form.contacto_id === "") { alert("El proveedor es obligatorio."); return; }
+    if (!form.fecha_vencimiento) { alert("La fecha de vencimiento es obligatoria."); return; }
+    if (form.items.some(it => !it.concepto_id || it.precio <= 0)) {
+      alert("Todos los ítems deben tener concepto y precio.");
+      return;
+    }
+    const duplicada = (gastos ?? []).find(g =>
+      g.tipo === "factura_proveedor" &&
+      g.contacto_id === Number(form.contacto_id) &&
+      g.numero_factura === form.numero_factura &&
+      g.id !== editing?.id
+    );
+    if (duplicada) {
+      alert(`Ya existe una factura N° ${form.numero_factura} para este proveedor.`);
+      return;
     }
     setSaving(true);
     try {
@@ -376,7 +381,7 @@ export default function FacturasPage() {
                 {config?.empresa_tax_id && <p className="text-xs text-[var(--muted)]">CUIT: {config.empresa_tax_id}</p>}
               </div>
               <div className="flex items-center gap-2">
-                <label className="text-sm font-medium whitespace-nowrap">No.</label>
+                <label className="text-sm font-medium whitespace-nowrap">No. *</label>
                 <input className="input w-44 text-sm" placeholder="0001-00012345" value={form.numero_factura} onChange={e => setForm({ ...form, numero_factura: e.target.value })} />
               </div>
             </div>
@@ -386,7 +391,7 @@ export default function FacturasPage() {
               <div className="space-y-3">
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="label">Proveedor</label>
+                    <label className="label">Proveedor *</label>
                     <Link href="/contactos" className="text-xs text-[var(--primary)] hover:underline">+ Nuevo proveedor</Link>
                   </div>
                   <select
@@ -420,7 +425,7 @@ export default function FacturasPage() {
                   <input type="date" className="input" value={form.fecha} onChange={e => setForm({ ...form, fecha: e.target.value })} required />
                 </div>
                 <div>
-                  <label className="label">Vencimiento</label>
+                  <label className="label">Vencimiento *</label>
                   <input type="date" className="input" value={form.fecha_vencimiento} onChange={e => setForm({ ...form, fecha_vencimiento: e.target.value })} />
                 </div>
               </div>
@@ -433,8 +438,8 @@ export default function FacturasPage() {
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 border-b border-[var(--border)]">
                   <tr>
-                    <th className="text-left px-3 py-2 font-medium text-[var(--muted)]">Concepto</th>
-                    <th className="text-left px-3 py-2 font-medium text-[var(--muted)] w-32">Precio</th>
+                    <th className="text-left px-3 py-2 font-medium text-[var(--muted)]">Concepto *</th>
+                    <th className="text-left px-3 py-2 font-medium text-[var(--muted)] w-32">Precio *</th>
                     <th className="text-left px-3 py-2 font-medium text-[var(--muted)] w-24">IVA%</th>
                     <th className="text-left px-3 py-2 font-medium text-[var(--muted)] w-20">Cant.</th>
                     <th className="text-left px-3 py-2 font-medium text-[var(--muted)]">Observaciones</th>
