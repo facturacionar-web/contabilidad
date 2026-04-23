@@ -101,13 +101,6 @@ export default function ContactoDashboardPage({
     .filter((n) => n.moneda === base && !n.gasto_relacionado_id)
     .reduce((s, n) => s + Number(n.monto), 0);
 
-  const pagoNumbers = useMemo(() => {
-    const allPagos = [...(gastos ?? [])].filter(g => g.tipo === "gasto").sort((a, b) => a.fecha.localeCompare(b.fecha));
-    const map: Record<number, number> = {};
-    allPagos.forEach((g, i) => { map[g.id] = i + 1; });
-    return map;
-  }, [gastos]);
-
   const cashPaidByFactura = useMemo(() => {
     const map: Record<number, number> = {};
     for (const pago of pagos) {
@@ -357,7 +350,7 @@ export default function ContactoDashboardPage({
                 const fps = g.factura_pagos ?? [];
                 return (
                   <tr key={g.id}>
-                    <td className="text-center text-[var(--muted)] font-medium">{pagoNumbers[g.id] ?? "—"}</td>
+                    <td className="text-center text-[var(--muted)] font-medium">{g.id}</td>
                     <td className="whitespace-nowrap">{formatDate(g.fecha, country.locale)}</td>
                     <td className="max-w-xs">
                       {fps.length > 0 ? (

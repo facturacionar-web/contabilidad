@@ -155,13 +155,6 @@ export default function PagosEgresosPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.contacto_id, facturasPendientes.length]);
 
-  const pagoNumbers = useMemo(() => {
-    const sorted = [...(pagos ?? [])].sort((a, b) => a.fecha.localeCompare(b.fecha));
-    const map: Record<number, number> = {};
-    sorted.forEach((g, i) => { map[g.id] = i + 1; });
-    return map;
-  }, [pagos]);
-
   const filtered = (pagos ?? []).filter(g => {
     if (!search) return true;
     const q = search.toLowerCase();
@@ -395,7 +388,7 @@ export default function PagosEgresosPage() {
                 const fps = g.factura_pagos ?? [];
                 return (
                   <tr key={g.id}>
-                    <td className="text-center text-[var(--muted)] font-medium">{pagoNumbers[g.id] ?? "—"}</td>
+                    <td className="text-center text-[var(--muted)] font-medium">{g.id}</td>
                     <td className="whitespace-nowrap">{formatDate(g.fecha, country.locale)}</td>
                     <td className="max-w-xs">
                       {fps.length > 0
