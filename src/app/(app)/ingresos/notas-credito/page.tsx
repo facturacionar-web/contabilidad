@@ -1,7 +1,8 @@
 "use client";
 import { useState } from "react";
 import { useTable, insertRow, updateRow, deleteRow, paisFilter } from "@/lib/useSupabaseData";
-import type { NotaCredito } from "@/lib/types";
+import type { NotaCredito, GastoEstado } from "@/lib/types";
+import { createClient } from "@/lib/supabase/client";
 import { useConfig } from "@/lib/useConfig";
 import { CURRENCIES, CurrencyCode, monedasDisponibles } from "@/lib/countries";
 import { formatMoney, formatDate, todayISO } from "@/lib/format";
@@ -118,11 +119,39 @@ export default function NotasCreditoPage() {
         motivo: "",
         notas: form.notas || null,
       };
+      const supabase = createClient();
+
+      // Si estamos editando y tenía factura vinculada, revertir el crédito anterior
+      if (editing?.gasto_relacionado_id) {
+        const { data: fac } = await supabase.from("gastos").select("*").eq("id", editing.gasto_relacionado_id).single();
+        if (fac) {
+          const revertido = Math.max(0, Math.round((Number(fac.monto_pagado) - Number(editing.monto)) * 100) / 100);
+          const total = Math.round(Number(fac.total) * 100) / 100;
+          const estado: GastoEstado = revertido <= 0 ? "pendiente" : revertido >= total ? "pagado" : "parcial";
+          await updateRow("gastos", editing.gasto_relacionado_id, { monto_pagado: revertido, estado });
+        }
+      }
+
       if (editing) {
         await updateRow("notas_credito", editing.id, payload);
       } else {
         await insertRow("notas_credito", payload);
       }
+
+      // Aplicar el crédito a la factura vinculada
+      if (payload.gasto_relacionado_id) {
+        const { data: fac } = await supabase.from("gastos").select("*").eq("id", payload.gasto_relacionado_id).single();
+        if (fac) {
+          const nuevo_pagado = Math.min(
+            Math.round((Number(fac.monto_pagado) + form.monto) * 100) / 100,
+            Math.round(Number(fac.total) * 100) / 100
+          );
+          const total = Math.round(Number(fac.total) * 100) / 100;
+          const estado: GastoEstado = nuevo_pagado >= total ? "pagado" : nuevo_pagado > 0 ? "parcial" : "pendiente";
+          await updateRow("gastos", payload.gasto_relacionado_id, { monto_pagado: nuevo_pagado, estado });
+        }
+      }
+
       await reload();
       setOpen(false);
     } catch (err) {
@@ -135,6 +164,16 @@ export default function NotasCreditoPage() {
   async function remove(n: NotaCredito) {
     if (!confirm("¿Eliminar esta nota de crédito?")) return;
     try {
+      if (n.gasto_relacionado_id) {
+        const supabase = createClient();
+        const { data: fac } = await supabase.from("gastos").select("*").eq("id", n.gasto_relacionado_id).single();
+        if (fac) {
+          const revertido = Math.max(0, Math.round((Number(fac.monto_pagado) - Number(n.monto)) * 100) / 100);
+          const total = Math.round(Number(fac.total) * 100) / 100;
+          const estado: GastoEstado = revertido <= 0 ? "pendiente" : revertido >= total ? "pagado" : "parcial";
+          await updateRow("gastos", n.gasto_relacionado_id, { monto_pagado: revertido, estado });
+        }
+      }
       await deleteRow("notas_credito", n.id);
       await reload();
     } catch (err) {

@@ -98,7 +98,7 @@ export default function ContactoDashboardPage({
     .reduce((s, f) => s + (Number(f.total) - Number(f.monto_pagado)), 0);
 
   const notasPorAplicar = notasRecibidas
-    .filter((n) => n.moneda === base)
+    .filter((n) => n.moneda === base && !n.gasto_relacionado_id)
     .reduce((s, n) => s + Number(n.monto), 0);
 
   async function removeGasto(g: Gasto) {
