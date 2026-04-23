@@ -252,12 +252,12 @@ export default function ContactoDashboardPage({
               }
             />
           ) : (
-            <table className="table">
+            <table className="table text-sm">
               <thead>
                 <tr>
-                  <th>Fecha</th>
                   <th>N° Factura</th>
-                  <th>Descripción</th>
+                  <th>Creación</th>
+                  <th>Vencimiento</th>
                   <th>Estado</th>
                   <th className="text-right">Total</th>
                   <th className="text-right">Pagado</th>
@@ -268,14 +268,14 @@ export default function ContactoDashboardPage({
               <tbody>
                 {facturas.map((g) => (
                   <tr key={g.id}>
-                    <td className="whitespace-nowrap">
-                      {formatDate(g.fecha, country.locale)}
-                    </td>
-                    <td className="text-[var(--muted)]">
+                    <td className="font-medium whitespace-nowrap">
                       {g.numero_factura || "—"}
                     </td>
-                    <td className="font-medium max-w-xs truncate">
-                      {g.concepto}
+                    <td className="whitespace-nowrap text-[var(--muted)]">
+                      {formatDate(g.fecha, country.locale)}
+                    </td>
+                    <td className="whitespace-nowrap text-[var(--muted)]">
+                      {g.fecha_vencimiento ? formatDate(g.fecha_vencimiento, country.locale) : "—"}
                     </td>
                     <td>{estadoBadge(g.estado)}</td>
                     <td className="text-right font-semibold text-red-600 whitespace-nowrap">

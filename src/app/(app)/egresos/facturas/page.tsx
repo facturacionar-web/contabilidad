@@ -330,10 +330,14 @@ export default function FacturasPage() {
             action={!gastos?.length && <button className="btn btn-primary" onClick={() => openNew()}><Plus className="w-4 h-4" /> Nueva factura</button>}
           />
         ) : (
-          <table className="table">
+          <table className="table text-sm">
             <thead>
               <tr>
-                <th>Fecha</th><th>N° Factura</th><th>Descripción</th><th>Proveedor</th><th>Estado</th>
+                <th>N° Factura</th>
+                <th>Proveedor</th>
+                <th>Creación</th>
+                <th>Vencimiento</th>
+                <th>Estado</th>
                 <th className="text-right">Total</th>
                 <th className="text-right">Pagado</th>
                 <th className="text-right">Por pagar</th>
@@ -343,14 +347,14 @@ export default function FacturasPage() {
             <tbody>
               {filtered.map(g => (
                 <tr key={g.id}>
-                  <td className="whitespace-nowrap">{formatDate(g.fecha, country.locale)}</td>
-                  <td className="text-[var(--muted)]">{g.numero_factura || "—"}</td>
-                  <td className="font-medium max-w-xs truncate">{g.concepto}</td>
-                  <td className="text-[var(--muted)]">
+                  <td className="font-medium whitespace-nowrap">{g.numero_factura || "—"}</td>
+                  <td>
                     {g.contacto_id
                       ? <Link href={`/contactos/${g.contacto_id}`} className="hover:underline hover:text-[var(--primary)]">{contactos?.find(c => c.id === g.contacto_id)?.nombre ?? `#${g.contacto_id}`}</Link>
                       : "—"}
                   </td>
+                  <td className="whitespace-nowrap text-[var(--muted)]">{formatDate(g.fecha, country.locale)}</td>
+                  <td className="whitespace-nowrap text-[var(--muted)]">{g.fecha_vencimiento ? formatDate(g.fecha_vencimiento, country.locale) : "—"}</td>
                   <td>{estadoBadge(g.estado)}</td>
                   <td className="text-right font-semibold text-red-600 whitespace-nowrap">-{formatMoney(Number(g.total), g.moneda, country.locale)}</td>
                   <td className="text-right text-[var(--muted)] whitespace-nowrap">
