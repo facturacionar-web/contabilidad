@@ -37,7 +37,7 @@ type FormState = {
   moneda: CurrencyCode;
   tasa_cambio: number;
   nota: string;
-  concepto: string;
+  concepto_id: string;
   monto_directo: number;
   facturas_pagadas: FPLocal[];
 };
@@ -48,11 +48,11 @@ const nextRKey = () => String(++_rkey);
 function blank(moneda: CurrencyCode): FormState {
   return {
     fecha: todayISO(), contacto_id: "", cuenta_id: "", metodo_pago: PAYMENT_METHODS[0],
-    moneda, tasa_cambio: 1, nota: "", concepto: "", monto_directo: 0, facturas_pagadas: [],
+    moneda, tasa_cambio: 1, nota: "", concepto_id: "", monto_directo: 0, facturas_pagadas: [],
   };
 }
 
-function pagoToForm(g: Gasto, facturas: Gasto[]): FormState {
+function pagoToForm(g: Gasto, facturas: Gasto[], conceptos: { id: string; nombre: string }[]): FormState {
   const fps = (g.factura_pagos ?? []).map((fp, i) => ({
     factura_id: fp.factura_id,
     numero_factura: fp.numero_factura,
@@ -63,6 +63,7 @@ function pagoToForm(g: Gasto, facturas: Gasto[]): FormState {
     retenciones: (fp.retenciones ?? []).map((r, j) => ({ key: `${i}-${j}`, tipo: r.tipo, monto: Number(r.monto) })),
     showRet: (fp.retenciones ?? []).length > 0,
   }));
+  const concepto_id = g.concepto_id ?? conceptos.find(c => c.nombre === g.concepto)?.id ?? "";
   return {
     fecha: g.fecha,
     contacto_id: g.contacto_id ?? "",
@@ -71,7 +72,7 @@ function pagoToForm(g: Gasto, facturas: Gasto[]): FormState {
     moneda: g.moneda,
     tasa_cambio: g.tasa_cambio ?? 1,
     nota: g.notas ?? "",
-    concepto: fps.length === 0 ? g.concepto : "",
+    concepto_id,
     monto_directo: fps.length === 0 ? Number(g.total) : 0,
     facturas_pagadas: fps,
   };
@@ -118,8 +119,12 @@ export default function PagosEgresosPage() {
   const { data: cuentas } = useTable("cuentas", {
     orderBy: "nombre", ascending: true, filter: paisFilter(pais), skip: !pais, deps: [pais],
   });
+  const { data: conceptosAll } = useTable("conceptos", {
+    orderBy: "nombre", ascending: true, filter: paisFilter(pais), skip: !pais, deps: [pais],
+  });
 
   const proveedores = (contactos ?? []).filter(c => c.tipo === "proveedor" || c.tipo === "ambos");
+  const conceptos = (conceptosAll ?? []).filter(c => c.tipo === "egreso" || c.tipo === "ambos");
 
   // Facturas pendientes del proveedor seleccionado, filtradas por moneda del pago
   const facturasPendientes = useMemo(() => {
@@ -163,14 +168,12 @@ export default function PagosEgresosPage() {
 
   const isForeign = form.moneda !== base;
 
+  const hasInvoiceAmounts = form.facturas_pagadas.some(fp => fp.monto > 0);
+
   const totals = useMemo(() => {
-    if (form.contacto_id === "") {
-      const net = form.monto_directo;
-      return { aplicado: net, retenciones: 0, neto: net, neto_base: net * (form.tasa_cambio || 1) };
-    }
     const aplicado = form.facturas_pagadas.reduce((s, fp) => s + fp.monto, 0);
     const retenciones = form.facturas_pagadas.reduce((s, fp) => s + fp.retenciones.reduce((sr, r) => sr + r.monto, 0), 0);
-    const neto = aplicado - retenciones;
+    const neto = aplicado > 0 ? aplicado - retenciones : form.monto_directo;
     return { aplicado, retenciones, neto, neto_base: neto * (form.tasa_cambio || 1) };
   }, [form]);
 
@@ -215,7 +218,7 @@ export default function PagosEgresosPage() {
     setEditing(g);
     setPreselected(null);
     setShowAllFacturas(false);
-    setForm(pagoToForm(g, facturas ?? []));
+    setForm(pagoToForm(g, facturas ?? [], conceptos));
     setOpen(true);
   }
 
@@ -260,10 +263,10 @@ export default function PagosEgresosPage() {
   }
 
   async function handleSave() {
+    if (!form.cuenta_id) { alert("La cuenta bancaria es obligatoria."); return; }
     setSaving(true);
     try {
       const { neto } = totals;
-      const hasContacto = form.contacto_id !== "";
       const fpData = form.facturas_pagadas.filter(fp => fp.monto > 0);
 
       const facturaPagosPayload: FacturaPago[] = fpData.map(fp => ({
@@ -275,11 +278,10 @@ export default function PagosEgresosPage() {
         retenciones: fp.retenciones.map(r => ({ tipo: r.tipo, monto: r.monto }) as Retencion),
       }));
 
-      // Concepto del pago
-      const proveedor = proveedores.find(c => c.id === Number(form.contacto_id));
-      const concepto = hasContacto && fpData.length > 0
-        ? `Pago a ${proveedor?.nombre ?? "proveedor"} — ${fpData.map(fp => fp.numero_factura ?? `#${fp.factura_id}`).join(", ")}`
-        : form.concepto || "Pago";
+      const conceptoNombre = conceptos.find(c => c.id === form.concepto_id)?.nombre ?? "Pago";
+      const concepto = fpData.length > 0
+        ? `${conceptoNombre} — ${fpData.map(fp => fp.numero_factura ?? `#${fp.factura_id}`).join(", ")}`
+        : conceptoNombre;
 
       const payload = {
         ctx_pais: pais,
@@ -288,8 +290,8 @@ export default function PagosEgresosPage() {
         contacto_id: form.contacto_id === "" ? null : Number(form.contacto_id),
         cuenta_id: form.cuenta_id || null,
         concepto,
-        categoria: concepto,
-        concepto_id: null,
+        categoria: conceptoNombre,
+        concepto_id: form.concepto_id || null,
         subtotal: neto,
         iva: 0,
         iva_monto: 0,
@@ -437,9 +439,9 @@ export default function PagosEgresosPage() {
               </select>
             </div>
             <div>
-              <label className="label">Cuenta bancaria</label>
+              <label className="label">Cuenta bancaria *</label>
               <select className="select" value={form.cuenta_id} onChange={e => setForm(f => ({ ...f, cuenta_id: e.target.value }))}>
-                <option value="">— Sin cuenta —</option>
+                <option value="">— Seleccionar cuenta —</option>
                 {(cuentas ?? []).map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
               </select>
             </div>
@@ -476,26 +478,27 @@ export default function PagosEgresosPage() {
             )}
           </div>
 
-          <div>
-            <label className="label">Nota de egreso</label>
-            <textarea className="textarea" rows={2} value={form.nota} onChange={e => setForm(f => ({ ...f, nota: e.target.value }))} />
-          </div>
-
-          {/* Pago directo (sin facturas) */}
-          {form.contacto_id === "" && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="label">Descripción *</label>
-                <input className="input" placeholder="¿En qué se gastó?" value={form.concepto}
-                  onChange={e => setForm(f => ({ ...f, concepto: e.target.value }))} />
-              </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="label">Concepto</label>
+              <select className="select" value={form.concepto_id} onChange={e => setForm(f => ({ ...f, concepto_id: e.target.value }))}>
+                <option value="">— Seleccionar concepto —</option>
+                {conceptos.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+              </select>
+            </div>
+            {!hasInvoiceAmounts && (
               <div>
                 <label className="label">Monto *</label>
                 <input type="number" step="0.01" min="0" className="input" value={form.monto_directo || ""}
                   onChange={e => setForm(f => ({ ...f, monto_directo: parseFloat(e.target.value) || 0 }))} />
               </div>
-            </div>
-          )}
+            )}
+          </div>
+
+          <div>
+            <label className="label">Nota de egreso</label>
+            <textarea className="textarea" rows={2} value={form.nota} onChange={e => setForm(f => ({ ...f, nota: e.target.value }))} />
+          </div>
 
           {/* Facturas pendientes */}
           {form.contacto_id !== "" && (
