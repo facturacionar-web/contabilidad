@@ -176,7 +176,10 @@ export default function FacturasPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pais, searchParams]);
 
-  function openEdit(g: Gasto) { setEditing(g); setForm(gastoToForm(g)); setOpen(true); }
+  function openEdit(g: Gasto) {
+    if (Number(g.monto_pagado) > 0) { alert("No se puede editar una factura con pagos o notas de crédito registrados."); return; }
+    setEditing(g); setForm(gastoToForm(g)); setOpen(true);
+  }
   function addItem() { setForm(f => ({ ...f, items: [...f.items, blankItem()] })); }
   function removeItem(key: string) { setForm(f => ({ ...f, items: f.items.filter(i => i.key !== key) })); }
   function updateItem(key: string, patch: Partial<Omit<LineItem, "key">>) {
@@ -276,6 +279,7 @@ export default function FacturasPage() {
   }
 
   async function remove(g: Gasto) {
+    if (Number(g.monto_pagado) > 0) { alert("No se puede eliminar una factura con pagos o notas de crédito registrados."); return; }
     if (!confirm("¿Eliminar esta factura?")) return;
     try { await deleteRow("gastos", g.id); await reload(); }
     catch (err) { alert("Error: " + (err as Error).message); }
@@ -377,8 +381,18 @@ export default function FacturasPage() {
                         <CreditCard className="w-4 h-4" />
                       </Link>
                     )}
-                    <button className="btn btn-ghost p-1.5" onClick={() => openEdit(g)}><Pencil className="w-4 h-4" /></button>
-                    <button className="btn btn-ghost p-1.5 text-red-600" onClick={() => remove(g)}><Trash2 className="w-4 h-4" /></button>
+                    <button
+                      className="btn btn-ghost p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
+                      onClick={() => openEdit(g)}
+                      disabled={Number(g.monto_pagado) > 0}
+                      title={Number(g.monto_pagado) > 0 ? "Tiene pagos o notas de crédito registrados" : "Editar"}
+                    ><Pencil className="w-4 h-4" /></button>
+                    <button
+                      className="btn btn-ghost p-1.5 text-red-600 disabled:opacity-30 disabled:cursor-not-allowed"
+                      onClick={() => remove(g)}
+                      disabled={Number(g.monto_pagado) > 0}
+                      title={Number(g.monto_pagado) > 0 ? "Tiene pagos o notas de crédito registrados" : "Eliminar"}
+                    ><Trash2 className="w-4 h-4" /></button>
                   </td>
                 </tr>
               ))}

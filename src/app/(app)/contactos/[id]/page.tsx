@@ -122,6 +122,10 @@ export default function ContactoDashboardPage({
   }, [notasRecibidas]);
 
   async function removeGasto(g: Gasto) {
+    if (g.tipo === "factura_proveedor" && Number(g.monto_pagado) > 0) {
+      alert("No se puede eliminar una factura con pagos o notas de crédito registrados.");
+      return;
+    }
     if (!confirm("¿Eliminar este registro?")) return;
     try {
       if (g.tipo === "gasto") {
@@ -301,18 +305,17 @@ export default function ContactoDashboardPage({
                           <CreditCard className="w-4 h-4" />
                         </Link>
                       )}
-                      <Link
-                        className="btn btn-ghost p-1.5"
-                        href={`/egresos/facturas?editar=${g.id}`}
-                      >
-                        <Pencil className="w-4 h-4" />
-                      </Link>
-                      <button
-                        className="btn btn-ghost p-1.5 text-red-600"
-                        onClick={() => removeGasto(g)}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {Number(g.monto_pagado) > 0 ? (
+                        <>
+                          <button className="btn btn-ghost p-1.5 opacity-30 cursor-not-allowed" disabled title="Tiene pagos o notas de crédito registrados"><Pencil className="w-4 h-4" /></button>
+                          <button className="btn btn-ghost p-1.5 text-red-600 opacity-30 cursor-not-allowed" disabled title="Tiene pagos o notas de crédito registrados"><Trash2 className="w-4 h-4" /></button>
+                        </>
+                      ) : (
+                        <>
+                          <Link className="btn btn-ghost p-1.5" href={`/egresos/facturas?editar=${g.id}`} title="Editar"><Pencil className="w-4 h-4" /></Link>
+                          <button className="btn btn-ghost p-1.5 text-red-600" onClick={() => removeGasto(g)} title="Eliminar"><Trash2 className="w-4 h-4" /></button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}
