@@ -23,6 +23,7 @@ type FPLocal = {
   total_factura: number;
   monto_pagado_antes: number;
   monto: number;
+  moneda: CurrencyCode;
   retenciones: RetLocal[];
   showRet: boolean;
 };
@@ -50,13 +51,14 @@ function blank(moneda: CurrencyCode): FormState {
   };
 }
 
-function pagoToForm(g: Gasto): FormState {
+function pagoToForm(g: Gasto, facturas: Gasto[]): FormState {
   const fps = (g.factura_pagos ?? []).map((fp, i) => ({
     factura_id: fp.factura_id,
     numero_factura: fp.numero_factura,
     total_factura: Number(fp.total_factura),
     monto_pagado_antes: Number(fp.monto_pagado_antes),
     monto: Number(fp.monto),
+    moneda: (facturas.find(f => f.id === fp.factura_id)?.moneda ?? g.moneda) as CurrencyCode,
     retenciones: (fp.retenciones ?? []).map((r, j) => ({ key: `${i}-${j}`, tipo: r.tipo, monto: Number(r.monto) })),
     showRet: (fp.retenciones ?? []).length > 0,
   }));
@@ -142,6 +144,7 @@ export default function PagosEgresosPage() {
         total_factura: Number(fac.total),
         monto_pagado_antes: Number(fac.monto_pagado),
         monto: preId && fac.id === preId ? Number(fac.total) - Number(fac.monto_pagado) : 0,
+        moneda: fac.moneda as CurrencyCode,
         retenciones: [] as RetLocal[],
         showRet: false,
       })),
@@ -209,7 +212,7 @@ export default function PagosEgresosPage() {
     setEditing(g);
     setPreselected(null);
     setShowAllFacturas(false);
-    setForm(pagoToForm(g));
+    setForm(pagoToForm(g, facturas ?? []));
     setOpen(true);
   }
 
@@ -524,20 +527,21 @@ export default function PagosEgresosPage() {
                           </div>
                           <div>
                             <p className="text-xs text-[var(--muted)]">Total</p>
-                            <p className="text-sm">{formatMoney(fp.total_factura, form.moneda, country.locale)}</p>
+                            <p className="text-sm">{formatMoney(fp.total_factura, fp.moneda, country.locale)}</p>
                           </div>
                           <div>
                             <p className="text-xs text-[var(--muted)]">Pagado</p>
-                            <p className="text-sm">{formatMoney(fp.monto_pagado_antes, form.moneda, country.locale)}</p>
+                            <p className="text-sm">{formatMoney(fp.monto_pagado_antes, fp.moneda, country.locale)}</p>
                           </div>
                           <div>
                             <p className="text-xs text-[var(--muted)]">Por pagar</p>
-                            <p className="text-sm font-medium text-amber-600">{formatMoney(porPagar, form.moneda, country.locale)}</p>
+                            <p className="text-sm font-medium text-amber-600">{formatMoney(porPagar, fp.moneda, country.locale)}</p>
                           </div>
                           <div>
                             <label className="text-xs text-[var(--muted)]">Monto a pagar *</label>
                             <input type="number" step="0.01" min="0" className="input text-sm py-1"
                               placeholder="0.00" value={fp.monto || ""}
+                              onClick={() => { if (!fp.monto) setFP(fp.factura_id, { monto: porPagar }); }}
                               onChange={e => setFP(fp.factura_id, { monto: parseFloat(e.target.value) || 0 })} />
                           </div>
                         </div>
