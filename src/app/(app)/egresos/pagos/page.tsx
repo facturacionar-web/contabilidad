@@ -88,6 +88,14 @@ export default function PagosEgresosPage() {
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
   const autoOpenedRef = useRef(false);
+  const [preselectedFacturaId, setPreselectedFacturaId] = useState<number | null>(null);
+  const preselectedRef = useRef<number | null>(null);
+  const [showAllFacturas, setShowAllFacturas] = useState(false);
+
+  function setPreselected(id: number | null) {
+    preselectedRef.current = id;
+    setPreselectedFacturaId(id);
+  }
 
   const { data: pagos, reload } = useTable("gastos", {
     orderBy: "fecha",
@@ -119,6 +127,7 @@ export default function PagosEgresosPage() {
   // Sync facturas_pagadas when contacto changes
   useEffect(() => {
     if (editing) return;
+    const preId = preselectedRef.current;
     setForm(f => ({
       ...f,
       facturas_pagadas: facturasPendientes.map(fac => ({
@@ -126,7 +135,7 @@ export default function PagosEgresosPage() {
         numero_factura: fac.numero_factura ?? null,
         total_factura: Number(fac.total),
         monto_pagado_antes: Number(fac.monto_pagado),
-        monto: 0,
+        monto: preId && fac.id === preId ? Number(fac.total) - Number(fac.monto_pagado) : 0,
         retenciones: [] as RetLocal[],
         showRet: false,
       })),
@@ -153,8 +162,10 @@ export default function PagosEgresosPage() {
     return { aplicado, retenciones, neto, neto_base: neto * (form.tasa_cambio || 1) };
   }, [form]);
 
-  function openNew(proveedorId?: number) {
+  function openNew(proveedorId?: number, facturaId?: number) {
     setEditing(null);
+    setPreselected(facturaId ?? null);
+    setShowAllFacturas(false);
     const f = blank(monedas[0] ?? base);
     if (proveedorId) f.contacto_id = proveedorId;
     setForm(f);
@@ -164,16 +175,28 @@ export default function PagosEgresosPage() {
   useEffect(() => {
     if (autoOpenedRef.current || !pais || searchParams.get("nuevo") !== "1") return;
     const p = searchParams.get("proveedor");
+    const fId = searchParams.get("factura");
     autoOpenedRef.current = true;
-    openNew(p ? Number(p) : undefined);
+    openNew(p ? Number(p) : undefined, fId ? Number(fId) : undefined);
     const params = new URLSearchParams(searchParams.toString());
-    params.delete("nuevo"); params.delete("proveedor");
+    params.delete("nuevo"); params.delete("proveedor"); params.delete("factura");
     const qs = params.toString();
     router.replace(qs ? `/egresos/pagos?${qs}` : "/egresos/pagos");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pais, searchParams]);
 
-  function openEdit(g: Gasto) { setEditing(g); setForm(pagoToForm(g)); setOpen(true); }
+  function openEdit(g: Gasto) {
+    setEditing(g);
+    setPreselected(null);
+    setShowAllFacturas(false);
+    setForm(pagoToForm(g));
+    setOpen(true);
+  }
+
+  const displayedFacturas = useMemo(() => {
+    if (!preselectedFacturaId || showAllFacturas) return form.facturas_pagadas;
+    return form.facturas_pagadas.filter(fp => fp.factura_id === preselectedFacturaId);
+  }, [form.facturas_pagadas, preselectedFacturaId, showAllFacturas]);
 
   // ── Item helpers ──
   function setFP(id: number, patch: Partial<FPLocal>) {
@@ -360,7 +383,11 @@ export default function PagosEgresosPage() {
             <div>
               <label className="label">Contacto / Proveedor</label>
               <select className="select" value={form.contacto_id}
-                onChange={e => setForm(f => ({ ...f, contacto_id: e.target.value === "" ? "" : Number(e.target.value), facturas_pagadas: [] }))}>
+                onChange={e => {
+                  setPreselected(null);
+                  setShowAllFacturas(false);
+                  setForm(f => ({ ...f, contacto_id: e.target.value === "" ? "" : Number(e.target.value), facturas_pagadas: [] }));
+                }}>
                 <option value="">— Sin contacto —</option>
                 {proveedores.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
               </select>
@@ -429,16 +456,29 @@ export default function PagosEgresosPage() {
           {/* Facturas pendientes */}
           {form.contacto_id !== "" && (
             <div className="border border-[var(--border)] rounded-lg overflow-hidden">
-              <div className="bg-slate-50 px-4 py-2.5 border-b border-[var(--border)]">
-                <p className="font-medium text-sm">Facturas pendientes</p>
-                <p className="text-xs text-[var(--muted)]">Ingresá el monto a aplicar a cada factura</p>
+              <div className="bg-slate-50 px-4 py-2.5 border-b border-[var(--border)] flex items-center justify-between">
+                <div>
+                  <p className="font-medium text-sm">Facturas pendientes</p>
+                  <p className="text-xs text-[var(--muted)]">Ingresá el monto a aplicar a cada factura</p>
+                </div>
+                {preselectedFacturaId !== null && (
+                  <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={showAllFacturas}
+                      onChange={e => setShowAllFacturas(e.target.checked)}
+                      className="rounded"
+                    />
+                    Ver todas las pendientes
+                  </label>
+                )}
               </div>
 
               {form.facturas_pagadas.length === 0 ? (
                 <p className="px-4 py-6 text-sm text-center text-[var(--muted)]">No hay facturas pendientes para este proveedor</p>
               ) : (
                 <div className="divide-y divide-[var(--border)]">
-                  {form.facturas_pagadas.map(fp => {
+                  {displayedFacturas.map(fp => {
                     const porPagar = fp.total_factura - fp.monto_pagado_antes;
                     const totalRet = fp.retenciones.reduce((s, r) => s + r.monto, 0);
                     return (

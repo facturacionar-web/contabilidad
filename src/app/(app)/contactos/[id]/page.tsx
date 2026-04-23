@@ -269,13 +269,22 @@ export default function ContactoDashboardPage({
                     </td>
                     <td className="text-right whitespace-nowrap">
                       {g.estado !== "pagado" && (
-                        <button
-                          className="btn btn-ghost p-1.5 text-green-600"
-                          onClick={() => marcarPagado(g)}
-                          title="Marcar pagado"
-                        >
-                          <CheckCircle2 className="w-4 h-4" />
-                        </button>
+                        <>
+                          <Link
+                            className="btn btn-ghost p-1.5 text-blue-600"
+                            href={`/egresos/pagos?nuevo=1&proveedor=${contactoId}&factura=${g.id}`}
+                            title="Pagar factura"
+                          >
+                            <CreditCard className="w-4 h-4" />
+                          </Link>
+                          <button
+                            className="btn btn-ghost p-1.5 text-green-600"
+                            onClick={() => marcarPagado(g)}
+                            title="Marcar pagado"
+                          >
+                            <CheckCircle2 className="w-4 h-4" />
+                          </button>
+                        </>
                       )}
                       <Link
                         className="btn btn-ghost p-1.5"
