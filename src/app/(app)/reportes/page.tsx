@@ -64,8 +64,9 @@ export default function ReportesPage() {
 
   const porCategoriaGastos = useMemo(() => {
     const map: Record<string, number> = {};
-    gastosMoneda.forEach((g) => {
-      map[g.categoria] = (map[g.categoria] ?? 0) + Number(g.total);
+    gastosMoneda.filter((g) => g.tipo === "gasto" && g.concepto_id).forEach((g) => {
+      const key = g.categoria || "Sin categoría";
+      map[key] = (map[key] ?? 0) + Number(g.total);
     });
     return Object.entries(map).sort((a, b) => b[1] - a[1]);
   }, [gastosMoneda]);
@@ -251,7 +252,7 @@ export default function ReportesPage() {
           barClass="bg-green-500"
         />
         <BarCard
-          title="Gastos por categoría"
+          title="Gastos por concepto"
           rows={porCategoriaGastos}
           max={maxGastoCat}
           moneda={moneda}
