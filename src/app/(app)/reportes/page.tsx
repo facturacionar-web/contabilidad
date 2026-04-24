@@ -1,8 +1,8 @@
 "use client";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { useTable, paisFilter } from "@/lib/useSupabaseData";
 import { useConfig } from "@/lib/useConfig";
-import { CURRENCIES, CurrencyCode } from "@/lib/countries";
+import { CurrencyCode } from "@/lib/countries";
 import { formatMoney, todayISO } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
 import { Download, TrendingUp, TrendingDown, Wallet } from "lucide-react";
@@ -15,24 +15,23 @@ function firstDayOfMonth() {
   return `${y}-${m}-01`;
 }
 
+function toLocal(amount: number, entryMoneda: string, tasa: number, localMoneda: string): number {
+  if (entryMoneda === localMoneda) return amount;
+  return amount * (tasa || 1);
+}
+
 export default function ReportesPage() {
   const { config, country } = useConfig();
   const pais = config?.pais;
+  const moneda = (config?.moneda_base ?? "ARS") as CurrencyCode;
   const [desde, setDesde] = useState(firstDayOfMonth());
   const [hasta, setHasta] = useState(todayISO());
-  const [moneda, setMoneda] = useState<CurrencyCode>("MXN");
-
-  // Sync moneda with config once loaded
-  useEffect(() => {
-    if (config?.moneda_base) setMoneda(config.moneda_base);
-  }, [config?.moneda_base]);
 
   const { data: allIngresos } = useTable("ingresos", { orderBy: "fecha", filter: paisFilter(pais), skip: !pais, deps: [pais] });
   const { data: allGastos } = useTable("gastos", { orderBy: "fecha", filter: paisFilter(pais), skip: !pais, deps: [pais] });
   const { data: allNotas } = useTable("notas_credito", { orderBy: "fecha", filter: paisFilter(pais), skip: !pais, deps: [pais] });
   const { data: contactos } = useTable("contactos", { orderBy: "nombre", ascending: true, filter: paisFilter(pais), skip: !pais, deps: [pais] });
 
-  // Filter by date range in memory
   const ingresos = useMemo(
     () => (allIngresos ?? []).filter((r) => r.fecha >= desde && r.fecha <= hasta),
     [allIngresos, desde, hasta]
@@ -46,62 +45,87 @@ export default function ReportesPage() {
     [allNotas, desde, hasta]
   );
 
-  const ingresosMoneda = ingresos.filter((i) => i.moneda === moneda);
-  const gastosMoneda = gastos.filter((g) => g.moneda === moneda);
-  const notasMoneda = notas.filter((n) => n.moneda === moneda);
+  // Map factura id → items (from ALL gastos, not date-filtered, for concept lookup)
+  const facturaItemsMap = useMemo(() => {
+    const map: Record<number, { concepto_nombre?: string; total?: number }[]> = {};
+    (allGastos ?? []).forEach((g) => {
+      if (g.tipo === "factura_proveedor" && g.id) {
+        map[g.id] = Array.isArray(g.items) ? g.items : [];
+      }
+    });
+    return map;
+  }, [allGastos]);
 
-  // Facturas pagadas + pagos directos (sin factura_pagos para no duplicar facturas)
-  const gastosEfectivos = gastosMoneda.filter((g) =>
-    (g.tipo === "factura_proveedor" && g.estado === "pagado") ||
-    (g.tipo === "gasto" && !g.factura_pagos)
+  // Pagos (tipo="gasto") = actual cash outflows, with the correct exchange rate at payment time
+  const pagos = useMemo(() => gastos.filter((g) => g.tipo === "gasto"), [gastos]);
+
+  const totalIngresos = useMemo(
+    () => ingresos.reduce((s, i) => s + toLocal(Number(i.monto), i.moneda, Number(i.tasa_cambio || 1), moneda), 0),
+    [ingresos, moneda]
   );
-
-  const totalIngresos = ingresosMoneda.reduce((s, i) => s + Number(i.monto), 0);
-  const totalGastos = gastosEfectivos.reduce((s, g) => s + Number(g.total), 0);
+  const totalGastos = useMemo(
+    () => pagos.reduce((s, g) => s + toLocal(Number(g.total), g.moneda, Number(g.tasa_cambio || 1), moneda), 0),
+    [pagos, moneda]
+  );
   const balance = totalIngresos - totalGastos;
 
   const porCategoriaIngresos = useMemo(() => {
     const map: Record<string, number> = {};
-    ingresosMoneda.forEach((i) => {
-      map[i.categoria] = (map[i.categoria] ?? 0) + Number(i.monto);
+    ingresos.forEach((i) => {
+      const key = i.categoria || "Sin categoría";
+      map[key] = (map[key] ?? 0) + toLocal(Number(i.monto), i.moneda, Number(i.tasa_cambio || 1), moneda);
     });
     return Object.entries(map).sort((a, b) => b[1] - a[1]);
-  }, [ingresosMoneda]);
+  }, [ingresos, moneda]);
 
   const porCategoriaGastos = useMemo(() => {
     const map: Record<string, number> = {};
-    gastosEfectivos.forEach((g) => {
-      if (g.tipo === "factura_proveedor") {
-        const items: { concepto_nombre?: string; total?: number }[] = Array.isArray(g.items) ? g.items : [];
-        if (items.length > 0) {
-          items.forEach((item) => {
-            const key = item.concepto_nombre || g.categoria || "Sin categoría";
-            map[key] = (map[key] ?? 0) + Number(item.total ?? 0);
-          });
-        } else {
-          const key = g.categoria || "Sin categoría";
-          map[key] = (map[key] ?? 0) + Number(g.total);
+    pagos.forEach((g) => {
+      const tasa = Number(g.tasa_cambio || 1);
+      const fpList: { factura_id?: number; monto?: number }[] = Array.isArray(g.factura_pagos) ? g.factura_pagos : [];
+
+      if (fpList.length > 0) {
+        // Pago linked to facturas — distribute amount across factura concepts
+        for (const fp of fpList) {
+          if (!fp.factura_id) continue;
+          const fpLocal = toLocal(Number(fp.monto ?? 0), g.moneda, tasa, moneda);
+          const items = facturaItemsMap[fp.factura_id] ?? [];
+          const itemsTotal = items.reduce((s, it) => s + Number(it.total ?? 0), 0);
+          if (items.length > 0 && itemsTotal > 0) {
+            items.forEach((item) => {
+              const key = item.concepto_nombre || "Sin categoría";
+              map[key] = (map[key] ?? 0) + fpLocal * (Number(item.total) / itemsTotal);
+            });
+          }
         }
+        // Direct lines added on the pago itself
+        const directItems: { concepto_nombre?: string; total?: number }[] = Array.isArray(g.items) ? g.items : [];
+        directItems.forEach((item) => {
+          if (item.concepto_nombre) {
+            map[item.concepto_nombre] = (map[item.concepto_nombre] ?? 0) + toLocal(Number(item.total ?? 0), g.moneda, tasa, moneda);
+          }
+        });
       } else if (g.concepto_id) {
+        // Standalone pago with a concept
         const key = g.categoria || "Sin categoría";
-        map[key] = (map[key] ?? 0) + Number(g.total);
+        map[key] = (map[key] ?? 0) + toLocal(Number(g.total), g.moneda, tasa, moneda);
       }
     });
     return Object.entries(map).sort((a, b) => b[1] - a[1]);
-  }, [gastosEfectivos]);
+  }, [pagos, facturaItemsMap, moneda]);
 
   const porProveedor = useMemo(() => {
     const map: Record<number, { nombre: string; total: number }> = {};
-    gastosEfectivos.forEach((g) => {
+    pagos.forEach((g) => {
       if (!g.contacto_id) return;
       const nombre = contactos?.find((c) => c.id === g.contacto_id)?.nombre ?? "—";
       if (!map[g.contacto_id]) map[g.contacto_id] = { nombre, total: 0 };
-      map[g.contacto_id].total += Number(g.total);
+      map[g.contacto_id].total += toLocal(Number(g.total), g.moneda, Number(g.tasa_cambio || 1), moneda);
     });
     return Object.entries(map)
       .map(([id, { nombre, total }]) => [nombre, total, Number(id)] as [string, number, number])
       .sort((a, b) => b[1] - a[1]).slice(0, 10);
-  }, [gastosEfectivos, contactos]);
+  }, [pagos, contactos, moneda]);
 
   const maxIngCat = Math.max(...porCategoriaIngresos.map(([, v]) => v), 1);
   const maxGastoCat = Math.max(...porCategoriaGastos.map(([, v]) => v), 1);
@@ -112,9 +136,9 @@ export default function ReportesPage() {
 
   function exportCSV() {
     const rows: string[] = [];
-    rows.push("Tipo,Fecha,Concepto,Categoria,Contacto,Moneda,Monto,Estado,Numero");
+    rows.push("Tipo,Fecha,Concepto,Categoria,Contacto,Moneda,Monto,TasaCambio,MontoPesos,Estado,Numero");
 
-    ingresosMoneda.forEach((i) => {
+    ingresos.forEach((i) => {
       rows.push(
         [
           "Ingreso",
@@ -124,12 +148,14 @@ export default function ReportesPage() {
           csvEsc(getContacto(i.contacto_id)),
           i.moneda,
           Number(i.monto),
+          Number(i.tasa_cambio || 1),
+          toLocal(Number(i.monto), i.moneda, Number(i.tasa_cambio || 1), moneda),
           "",
           csvEsc(i.referencia ?? ""),
         ].join(",")
       );
     });
-    gastosMoneda.forEach((g) => {
+    gastos.filter((g) => g.tipo !== "gasto" || !g.factura_pagos).forEach((g) => {
       rows.push(
         [
           g.tipo === "factura_proveedor" ? "Factura prov." : "Gasto",
@@ -139,12 +165,14 @@ export default function ReportesPage() {
           csvEsc(getContacto(g.contacto_id)),
           g.moneda,
           -Number(g.total),
+          Number(g.tasa_cambio || 1),
+          -toLocal(Number(g.total), g.moneda, Number(g.tasa_cambio || 1), moneda),
           g.estado,
           csvEsc(g.numero_factura ?? ""),
         ].join(",")
       );
     });
-    notasMoneda.forEach((n) => {
+    notas.forEach((n) => {
       rows.push(
         [
           n.tipo === "emitida" ? "Nota cred. emitida" : "Nota cred. recibida",
@@ -154,6 +182,8 @@ export default function ReportesPage() {
           csvEsc(getContacto(n.contacto_id)),
           n.moneda,
           Number(n.monto),
+          Number(n.tasa_cambio || 1),
+          toLocal(Number(n.monto), n.moneda, Number(n.tasa_cambio || 1), moneda),
           "",
           csvEsc(n.numero ?? ""),
         ].join(",")
@@ -184,7 +214,7 @@ export default function ReportesPage() {
       />
 
       <div className="card mb-6">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label className="label">Desde</label>
             <input
@@ -203,23 +233,9 @@ export default function ReportesPage() {
               onChange={(e) => setHasta(e.target.value)}
             />
           </div>
-          <div>
-            <label className="label">Moneda</label>
-            <select
-              className="select"
-              value={moneda}
-              onChange={(e) => setMoneda(e.target.value as CurrencyCode)}
-            >
-              {Object.values(CURRENCIES).map((c) => (
-                <option key={c.code} value={c.code}>
-                  {c.code} — {c.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex items-end gap-2">
+          <div className="flex items-end">
             <button
-              className="btn btn-secondary flex-1"
+              className="btn btn-secondary w-full"
               onClick={() => {
                 setDesde(firstDayOfMonth());
                 setHasta(todayISO());
