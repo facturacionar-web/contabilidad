@@ -1,11 +1,162 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useConfig, saveConfig } from "@/lib/useConfig";
 import { createClient } from "@/lib/supabase/client";
 import { COUNTRIES, CountryCode, CURRENCIES, CurrencyCode } from "@/lib/countries";
 import type { Config } from "@/lib/types";
 import PageHeader from "@/components/PageHeader";
-import { Save, Download, Upload, Trash2, Star } from "lucide-react";
+import { Save, Download, Upload, Trash2, Star, Users, Plus, KeyRound, X } from "lucide-react";
+
+type SubUser = { id: string; email: string; created_at: string; last_sign_in_at?: string | null };
+
+function UsuariosSection() {
+  const [users, setUsers] = useState<SubUser[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(true);
+  const [newEmail, setNewEmail] = useState("");
+  const [newPass, setNewPass] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [resetId, setResetId] = useState<string | null>(null);
+  const [resetPass, setResetPass] = useState("");
+  const [resetting, setResetting] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user?.user_metadata?.owner_id) { setIsAdmin(false); setLoading(false); return; }
+    const res = await fetch("/api/admin/users");
+    const data = await res.json();
+    if (!res.ok) { setError(data.error); } else { setUsers(data.users); }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function create(e: React.FormEvent) {
+    e.preventDefault();
+    setCreating(true);
+    const res = await fetch("/api/admin/users", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: newEmail, password: newPass }),
+    });
+    const data = await res.json();
+    setCreating(false);
+    if (!res.ok) { alert("Error: " + data.error); return; }
+    setNewEmail(""); setNewPass("");
+    await load();
+  }
+
+  async function remove(id: string, email: string) {
+    if (!confirm(`¿Eliminar usuario ${email}?`)) return;
+    const res = await fetch(`/api/admin/users?id=${id}`, { method: "DELETE" });
+    const data = await res.json();
+    if (!res.ok) { alert("Error: " + data.error); return; }
+    await load();
+  }
+
+  async function resetPassword(e: React.FormEvent) {
+    e.preventDefault();
+    setResetting(true);
+    const res = await fetch("/api/admin/users", {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: resetId, password: resetPass }),
+    });
+    const data = await res.json();
+    setResetting(false);
+    if (!res.ok) { alert("Error: " + data.error); return; }
+    setResetId(null); setResetPass(""); alert("Contraseña actualizada.");
+  }
+
+  if (!isAdmin) return null;
+
+  return (
+    <div className="card max-w-3xl mt-8">
+      <div className="flex items-center gap-2 mb-1">
+        <Users className="w-5 h-5 text-[var(--primary)]" />
+        <h3 className="font-semibold">Usuarios</h3>
+      </div>
+      <p className="text-sm text-[var(--muted)] mb-4">
+        Creá usuarios que pueden acceder a la misma cuenta. Ellos inician sesión en{" "}
+        <span className="font-medium">/login</span> con las credenciales que les asignés.
+      </p>
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 text-sm text-red-700">
+          <strong>Error:</strong> {error}
+          {error.includes("SERVICE_ROLE_KEY") && (
+            <p className="mt-1">Agregá <code className="bg-red-100 px-1 rounded">SUPABASE_SERVICE_ROLE_KEY</code> en las variables de entorno de Railway.</p>
+          )}
+        </div>
+      )}
+
+      {loading ? (
+        <p className="text-sm text-[var(--muted)]">Cargando usuarios…</p>
+      ) : (
+        <>
+          {users.length > 0 && (
+            <div className="mb-5 border border-[var(--border)] rounded-lg overflow-hidden">
+              <table className="table text-sm">
+                <thead><tr><th>Email</th><th>Creado</th><th>Último acceso</th><th className="text-right">Acciones</th></tr></thead>
+                <tbody>
+                  {users.map(u => (
+                    <tr key={u.id}>
+                      <td className="font-medium">{u.email}</td>
+                      <td className="text-[var(--muted)]">{u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}</td>
+                      <td className="text-[var(--muted)]">{u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "Nunca"}</td>
+                      <td className="text-right whitespace-nowrap">
+                        <button className="btn btn-ghost p-1.5" title="Cambiar contraseña" onClick={() => { setResetId(u.id); setResetPass(""); }}>
+                          <KeyRound className="w-4 h-4" />
+                        </button>
+                        <button className="btn btn-ghost p-1.5 text-red-600" title="Eliminar usuario" onClick={() => remove(u.id, u.email ?? "")}>
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {resetId && (
+            <form onSubmit={resetPassword} className="bg-slate-50 border border-[var(--border)] rounded-lg p-4 mb-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium">Cambiar contraseña</p>
+                <button type="button" onClick={() => setResetId(null)}><X className="w-4 h-4 text-[var(--muted)]" /></button>
+              </div>
+              <input type="password" className="input" placeholder="Nueva contraseña (mín. 6 caracteres)" minLength={6} required
+                value={resetPass} onChange={e => setResetPass(e.target.value)} />
+              <button type="submit" className="btn btn-primary btn-sm" disabled={resetting}>
+                {resetting ? "Guardando…" : "Guardar contraseña"}
+              </button>
+            </form>
+          )}
+
+          <form onSubmit={create} className="space-y-3">
+            <p className="text-sm font-medium flex items-center gap-1"><Plus className="w-4 h-4" /> Nuevo usuario</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="label">Email</label>
+                <input type="email" className="input" required value={newEmail} onChange={e => setNewEmail(e.target.value)} />
+              </div>
+              <div>
+                <label className="label">Contraseña (mín. 6 caracteres)</label>
+                <input type="password" className="input" required minLength={6} value={newPass} onChange={e => setNewPass(e.target.value)} />
+              </div>
+            </div>
+            <button type="submit" className="btn btn-secondary" disabled={creating}>
+              {creating ? "Creando…" : "Crear usuario"}
+            </button>
+          </form>
+
+        </>
+      )}
+    </div>
+  );
+}
 
 type FormState = {
   moneda_base: CurrencyCode;
@@ -284,6 +435,8 @@ export default function ConfiguracionPage() {
           {saved && <span className="text-sm text-green-600 font-medium">✓ Guardado</span>}
         </div>
       </form>
+
+      <UsuariosSection />
 
       <div className="card max-w-3xl mt-8">
         <h3 className="font-semibold mb-2">Respaldo de datos</h3>

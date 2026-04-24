@@ -208,6 +208,7 @@ export default function PagosRecibidosPage() {
           <table className="table">
             <thead>
               <tr>
+                <th className="text-center w-10">#</th>
                 <th>Fecha</th>
                 <th>Descripción</th>
                 <th>Concepto</th>
@@ -221,6 +222,7 @@ export default function PagosRecibidosPage() {
             <tbody>
               {filtered.map((i) => (
                 <tr key={i.id}>
+                  <td className="text-center text-[var(--muted)] font-medium">{i.id}</td>
                   <td className="whitespace-nowrap">{formatDate(i.fecha, country.locale)}</td>
                   <td className="font-medium max-w-xs truncate">{i.concepto}</td>
                   <td className="text-[var(--muted)]">
@@ -239,12 +241,18 @@ export default function PagosRecibidosPage() {
                     +{formatMoney(Number(i.monto), i.moneda, country.locale)}
                   </td>
                   <td className="text-right whitespace-nowrap">
-                    <button className="btn btn-ghost p-1.5" onClick={() => openEdit(i)}>
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    <button className="btn btn-ghost p-1.5 text-red-600" onClick={() => remove(i)}>
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {i.categoria === "devolución" ? (
+                      <span className="text-xs text-[var(--muted)] px-2">Desde NC</span>
+                    ) : (
+                      <>
+                        <button className="btn btn-ghost p-1.5" onClick={() => openEdit(i)}>
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button className="btn btn-ghost p-1.5 text-red-600" onClick={() => remove(i)}>
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}

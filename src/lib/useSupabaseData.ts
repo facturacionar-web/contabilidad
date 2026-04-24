@@ -74,9 +74,10 @@ export async function insertRow<K extends keyof TableMap>(
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) throw new Error("No autenticado");
+  const effectiveId = (user.user_metadata?.owner_id as string | undefined) ?? user.id;
   const { data, error } = await supabase
     .from(table)
-    .insert({ ...row, user_id: user.id } as never)
+    .insert({ ...row, user_id: effectiveId } as never)
     .select()
     .single();
   if (error) throw new Error(error.message);

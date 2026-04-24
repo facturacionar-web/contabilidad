@@ -9,7 +9,7 @@ import {
   paisFilter,
 } from "@/lib/useSupabaseData";
 import { createClient } from "@/lib/supabase/client";
-import type { Gasto, GastoEstado } from "@/lib/types";
+import type { Gasto, GastoEstado, Ingreso, NotaCredito } from "@/lib/types";
 import { useConfig } from "@/lib/useConfig";
 import { CurrencyCode } from "@/lib/countries";
 import { formatMoney, formatDate } from "@/lib/format";
@@ -23,9 +23,11 @@ import {
   Pencil,
   Trash2,
   FileMinus,
+  RotateCcw,
+  TrendingUp,
 } from "lucide-react";
 
-type Tab = "facturas" | "pagos";
+type Tab = "facturas" | "pagos" | "notas" | "pagos-recibidos";
 
 export default function ContactoDashboardPage({
   params,
@@ -39,12 +41,19 @@ export default function ContactoDashboardPage({
   const base = config?.moneda_base ?? "MXN";
 
   const searchParams = useSearchParams();
-  const [tab, setTab] = useState<Tab>(() =>
-    searchParams.get("tab") === "pagos" ? "pagos" : "facturas"
-  );
+  const [tab, setTab] = useState<Tab>(() => {
+    const t = searchParams.get("tab");
+    if (t === "pagos") return "pagos";
+    if (t === "notas") return "notas";
+    if (t === "pagos-recibidos") return "pagos-recibidos";
+    return "facturas";
+  });
 
   useEffect(() => {
-    if (searchParams.get("tab") === "pagos") setTab("pagos");
+    const t = searchParams.get("tab");
+    if (t === "pagos") setTab("pagos");
+    else if (t === "notas") setTab("notas");
+    else if (t === "pagos-recibidos") setTab("pagos-recibidos");
   }, [searchParams]);
 
   const { data: contactos } = useTable("contactos", {
@@ -60,7 +69,13 @@ export default function ContactoDashboardPage({
     skip: !pais,
     deps: [pais],
   });
-  const { data: notas } = useTable("notas_credito", {
+  const { data: notas, reload: reloadNotas } = useTable("notas_credito", {
+    orderBy: "fecha",
+    filter: paisFilter(pais),
+    skip: !pais,
+    deps: [pais],
+  });
+  const { data: ingresos } = useTable("ingresos", {
     orderBy: "fecha",
     filter: paisFilter(pais),
     skip: !pais,
@@ -93,12 +108,24 @@ export default function ContactoDashboardPage({
     [notas, contactoId]
   );
 
+  const pagosRecibidos = useMemo(
+    () => (ingresos ?? []).filter((i) => i.contacto_id === contactoId),
+    [ingresos, contactoId]
+  );
+
   const porPagar = facturas
     .filter((f) => f.moneda === base && f.estado !== "pagado")
     .reduce((s, f) => s + (Number(f.total) - Number(f.monto_pagado)), 0);
 
   const notasPorAplicar = notasRecibidas
-    .filter((n) => n.moneda === base && !n.gasto_relacionado_id)
+    .filter((n) => {
+      if (n.moneda !== base) return false;
+      if (n.gasto_relacionado_id) return false;
+      const aps = ((n as unknown as { factura_aplicaciones?: unknown[] }).factura_aplicaciones ?? []);
+      if (aps.length > 0) return false;
+      try { if (JSON.parse(n.motivo || "")?.ingreso_id) return false; } catch { /* ok */ }
+      return true;
+    })
     .reduce((s, n) => s + Number(n.monto), 0);
 
   const cashPaidByFactura = useMemo(() => {
@@ -120,6 +147,55 @@ export default function ContactoDashboardPage({
     }
     return map;
   }, [notasRecibidas]);
+
+  function calcAplicado(n: NotaCredito): number {
+    type AP = { monto: number };
+    const aps = ((n as unknown as { factura_aplicaciones?: AP[] }).factura_aplicaciones ?? []);
+    let aplicado = aps.reduce((s, a) => s + Number(a.monto), 0);
+    if (aps.length === 0 && n.gasto_relacionado_id) aplicado = Number(n.monto);
+    try {
+      const mot = JSON.parse(n.motivo || "");
+      if (mot?.devolucion?.monto) aplicado += Number(mot.devolucion.monto);
+    } catch { /* ok */ }
+    return Math.min(Math.round(aplicado * 100) / 100, Number(n.monto));
+  }
+
+  async function removeNota(n: NotaCredito) {
+    if (!confirm("¿Eliminar esta nota de crédito?")) return;
+    try {
+      // Delete linked devolucion ingreso
+      try {
+        const mot = JSON.parse(n.motivo || "");
+        if (mot?.ingreso_id) await deleteRow("ingresos", mot.ingreso_id);
+      } catch { /* ok */ }
+      // Revert factura_aplicaciones
+      type AP = { factura_id: number; monto: number };
+      const aps = ((n as unknown as { factura_aplicaciones?: AP[] }).factura_aplicaciones ?? []);
+      if (aps.length > 0) {
+        for (const ap of aps) {
+          const fac = (gastos ?? []).find(g => g.id === ap.factura_id);
+          if (!fac) continue;
+          const revertido = Math.max(0, Math.round((Number(fac.monto_pagado) - ap.monto) * 100) / 100);
+          const total = Math.round(Number(fac.total) * 100) / 100;
+          const estado: GastoEstado = revertido <= 0 ? "pendiente" : revertido >= total ? "pagado" : "parcial";
+          await updateRow("gastos", ap.factura_id, { monto_pagado: revertido, estado });
+        }
+      } else if (n.gasto_relacionado_id) {
+        const fac = (gastos ?? []).find(g => g.id === n.gasto_relacionado_id);
+        if (fac) {
+          const revertido = Math.max(0, Math.round((Number(fac.monto_pagado) - Number(n.monto)) * 100) / 100);
+          const total = Math.round(Number(fac.total) * 100) / 100;
+          const estado: GastoEstado = revertido <= 0 ? "pendiente" : revertido >= total ? "pagado" : "parcial";
+          await updateRow("gastos", n.gasto_relacionado_id, { monto_pagado: revertido, estado });
+        }
+      }
+      await deleteRow("notas_credito", n.id);
+      await reloadNotas();
+      await reload();
+    } catch (err) {
+      alert("Error: " + (err as Error).message);
+    }
+  }
 
   async function removeGasto(g: Gasto) {
     if (g.tipo === "factura_proveedor" && Number(g.monto_pagado) > 0) {
@@ -229,6 +305,12 @@ export default function ContactoDashboardPage({
             <TabButton active={tab === "pagos"} onClick={() => setTab("pagos")}>
               Pagos ({pagos.length})
             </TabButton>
+            <TabButton active={tab === "notas"} onClick={() => setTab("notas")}>
+              Notas de crédito ({notasRecibidas.length})
+            </TabButton>
+            <TabButton active={tab === "pagos-recibidos"} onClick={() => setTab("pagos-recibidos")}>
+              Pagos recibidos ({pagosRecibidos.length})
+            </TabButton>
           </div>
           {tab === "pagos" && (
             <Link
@@ -273,7 +355,12 @@ export default function ContactoDashboardPage({
                 {facturas.map((g) => (
                   <tr key={g.id}>
                     <td className="font-medium whitespace-nowrap">
-                      {g.numero_factura || "—"}
+                      <Link
+                        href={`/egresos/facturas/${g.id}`}
+                        className="hover:underline hover:text-[var(--primary)]"
+                      >
+                        {g.numero_factura || `#${g.id}`}
+                      </Link>
                     </td>
                     <td className="whitespace-nowrap text-[var(--muted)]">
                       {formatDate(g.fecha, country.locale)}
@@ -322,18 +409,19 @@ export default function ContactoDashboardPage({
               </tbody>
             </table>
           )
-        ) : pagos.length === 0 ? (
-          <EmptyState
-            icon={<CreditCard className="w-6 h-6" />}
-            title="Sin pagos"
-            description="No hay pagos registrados para este proveedor."
-            action={
-              <Link href={`/egresos/pagos?nuevo=1&proveedor=${contactoId}`} className="btn btn-primary">
-                <Plus className="w-4 h-4" /> Nuevo pago
-              </Link>
-            }
-          />
-        ) : (
+        ) : tab === "pagos" ? (
+          pagos.length === 0 ? (
+            <EmptyState
+              icon={<CreditCard className="w-6 h-6" />}
+              title="Sin pagos"
+              description="No hay pagos registrados para este proveedor."
+              action={
+                <Link href={`/egresos/pagos?nuevo=1&proveedor=${contactoId}`} className="btn btn-primary">
+                  <Plus className="w-4 h-4" /> Nuevo pago
+                </Link>
+              }
+            />
+          ) : (
           <table className="table text-sm">
             <thead>
               <tr>
@@ -350,7 +438,11 @@ export default function ContactoDashboardPage({
                 const fps = g.factura_pagos ?? [];
                 return (
                   <tr key={g.id}>
-                    <td className="text-center text-[var(--muted)] font-medium">{g.id}</td>
+                    <td className="text-center font-medium">
+                      <Link href={`/egresos/pagos/${g.id}`} className="hover:underline hover:text-[var(--primary)] text-[var(--muted)]">
+                        {g.id}
+                      </Link>
+                    </td>
                     <td className="whitespace-nowrap">{formatDate(g.fecha, country.locale)}</td>
                     <td className="max-w-xs">
                       {fps.length > 0 ? (
@@ -358,7 +450,6 @@ export default function ContactoDashboardPage({
                           {fps.map((fp, i) => (
                             <div key={i}>
                               <span className="font-medium">{fp.numero_factura ?? `#${fp.factura_id}`}</span>
-                              <span className="text-[var(--muted)] ml-2">{formatMoney(fp.monto, g.moneda, country.locale)}</span>
                               {fp.retenciones?.length > 0 && (
                                 <span className="text-xs text-amber-600 ml-2">
                                   (ret: {fp.retenciones.map(r => `${r.tipo} ${formatMoney(r.monto, g.moneda, country.locale)}`).join(", ")})
@@ -388,6 +479,105 @@ export default function ContactoDashboardPage({
               })}
             </tbody>
           </table>
+          )
+        ) : tab === "notas" ? (
+          notasRecibidas.length === 0 ? (
+            <EmptyState
+              icon={<RotateCcw className="w-6 h-6" />}
+              title="Sin notas de crédito"
+              description="No hay notas de crédito registradas para este proveedor."
+            />
+          ) : (
+            <table className="table text-sm">
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Número</th>
+                  <th>Concepto</th>
+                  <th>Facturas aplicadas</th>
+                  <th className="text-right">Monto</th>
+                  <th className="text-right">Aplicado</th>
+                  <th className="text-right">Por aplicar</th>
+                  <th className="text-right">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {notasRecibidas.map((n) => {
+                  const aps = ((n as unknown as { factura_aplicaciones?: { numero_factura: string | null; factura_id: number }[] }).factura_aplicaciones ?? []);
+                  let hasDevolucion = false;
+                  try { hasDevolucion = !!JSON.parse(n.motivo || "")?.ingreso_id; } catch { /* ok */ }
+                  const aplicado = calcAplicado(n);
+                  const porAplicar = Math.max(0, Math.round((Number(n.monto) - aplicado) * 100) / 100);
+                  return (
+                    <tr key={n.id}>
+                      <td className="whitespace-nowrap">{formatDate(n.fecha, country.locale)}</td>
+                      <td className="text-[var(--muted)]">{n.numero || "—"}</td>
+                      <td className="font-medium max-w-xs truncate">{n.concepto}</td>
+                      <td className="text-[var(--muted)]">
+                        {aps.length > 0
+                          ? aps.map(a => a.numero_factura ?? `#${a.factura_id}`).join(", ")
+                          : n.gasto_relacionado_id
+                            ? `#${n.gasto_relacionado_id}`
+                            : hasDevolucion
+                              ? <span className="text-teal-600 text-xs">Devolución de dinero</span>
+                              : <span className="text-amber-600 text-xs">Sin asignar</span>}
+                      </td>
+                      <td className="text-right font-semibold whitespace-nowrap">
+                        {formatMoney(Number(n.monto), n.moneda as CurrencyCode, country.locale)}
+                      </td>
+                      <td className="text-right text-[var(--muted)] whitespace-nowrap">
+                        {formatMoney(aplicado, n.moneda as CurrencyCode, country.locale)}
+                      </td>
+                      <td className="text-right whitespace-nowrap">
+                        {porAplicar > 0.005
+                          ? <span className="text-amber-600 font-medium">{formatMoney(porAplicar, n.moneda as CurrencyCode, country.locale)}</span>
+                          : <span className="text-teal-600 text-xs">Aplicado</span>}
+                      </td>
+                      <td className="text-right whitespace-nowrap">
+                        <Link className="btn btn-ghost p-1.5" href={`/ingresos/notas-credito?editar=${n.id}`} title="Editar">
+                          <Pencil className="w-4 h-4" />
+                        </Link>
+                        <button className="btn btn-ghost p-1.5 text-red-600" onClick={() => removeNota(n)} title="Eliminar">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )
+        ) : (
+          pagosRecibidos.length === 0 ? (
+            <EmptyState
+              icon={<TrendingUp className="w-6 h-6" />}
+              title="Sin pagos recibidos"
+              description="No hay pagos recibidos registrados para este contacto."
+            />
+          ) : (
+            <table className="table text-sm">
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Concepto</th>
+                  <th>Método</th>
+                  <th className="text-right">Monto</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pagosRecibidos.map((i: Ingreso) => (
+                  <tr key={i.id}>
+                    <td className="whitespace-nowrap">{formatDate(i.fecha, country.locale)}</td>
+                    <td className="font-medium max-w-xs truncate">{i.concepto}</td>
+                    <td className="text-[var(--muted)]">{i.metodo_pago || "—"}</td>
+                    <td className="text-right font-semibold text-teal-600 whitespace-nowrap">
+                      {formatMoney(Number(i.monto), i.moneda as CurrencyCode, country.locale)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )
         )}
       </div>
     </>

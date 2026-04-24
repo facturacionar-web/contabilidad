@@ -17,6 +17,7 @@ import {
   CreditCard,
   FileMinus,
   ArrowDownCircle,
+  Package,
 } from "lucide-react";
 
 type SubItem = { href: string; label: string };
@@ -55,6 +56,7 @@ const nav: (NavLink | NavGroup)[] = [
   },
   { href: "/conceptos", label: "Conceptos", icon: Layers },
   { href: "/cuentas", label: "Cuentas", icon: Building2 },
+  { href: "/proveedores", label: "Gastos por proveedor", icon: Package },
   { href: "/reportes", label: "Reportes", icon: BarChart3 },
   { href: "/configuracion", label: "Configuración", icon: Settings },
 ];
@@ -106,7 +108,7 @@ export default function Sidebar() {
     <aside className="w-64 bg-white border-r border-[var(--border)] flex flex-col fixed inset-y-0 left-0">
       <div className="h-16 px-6 flex items-center border-b border-[var(--border)] gap-2">
         <Wallet className="w-6 h-6 text-[var(--primary)]" />
-        <span className="font-semibold text-lg">Contabilidad</span>
+        <span className="font-semibold text-lg">Alegrant</span>
       </div>
 
       <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
@@ -177,7 +179,7 @@ export default function Sidebar() {
       </nav>
 
       <div className="p-4 border-t border-[var(--border)] text-xs text-[var(--muted)]">
-        v1.1 · Contabilidad
+        v1.1 · Alegrant
       </div>
     </aside>
   );

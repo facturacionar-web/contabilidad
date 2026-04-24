@@ -352,7 +352,14 @@ export default function FacturasPage() {
             <tbody>
               {filtered.map(g => (
                 <tr key={g.id}>
-                  <td className="font-medium whitespace-nowrap">{g.numero_factura || "—"}</td>
+                  <td className="font-medium whitespace-nowrap">
+                    <Link
+                      href={`/egresos/facturas/${g.id}`}
+                      className="hover:underline hover:text-[var(--primary)]"
+                    >
+                      {g.numero_factura || `#${g.id}`}
+                    </Link>
+                  </td>
                   <td>
                     {g.contacto_id
                       ? <Link href={`/contactos/${g.contacto_id}`} className="hover:underline hover:text-[var(--primary)]">{contactos?.find(c => c.id === g.contacto_id)?.nombre ?? `#${g.contacto_id}`}</Link>

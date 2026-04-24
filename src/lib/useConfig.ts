@@ -37,17 +37,18 @@ export async function saveConfig(patch: Partial<Config> & { pais: string }): Pro
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) throw new Error("No autenticado");
+  const effectiveId = (user.user_metadata?.owner_id as string | undefined) ?? user.id;
 
   // Si se marca como activo, desactivar los demás primero
   if (patch.is_active) {
     await supabase
       .from("config")
       .update({ is_active: false })
-      .eq("user_id", user.id);
+      .eq("user_id", effectiveId);
   }
 
   const { error } = await supabase
     .from("config")
-    .upsert({ ...patch, user_id: user.id }, { onConflict: "user_id,pais" });
+    .upsert({ ...patch, user_id: effectiveId }, { onConflict: "user_id,pais" });
   if (error) throw new Error(error.message);
 }

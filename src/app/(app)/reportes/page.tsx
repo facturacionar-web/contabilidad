@@ -32,6 +32,7 @@ export default function ReportesPage() {
   const { data: allGastos } = useTable("gastos", { orderBy: "fecha", filter: paisFilter(pais), skip: !pais, deps: [pais] });
   const { data: allNotas } = useTable("notas_credito", { orderBy: "fecha", filter: paisFilter(pais), skip: !pais, deps: [pais] });
   const { data: contactos } = useTable("contactos", { orderBy: "nombre", ascending: true, filter: paisFilter(pais), skip: !pais, deps: [pais] });
+  const { data: cuentas } = useTable("cuentas", { orderBy: "nombre", ascending: true, filter: paisFilter(pais), skip: !pais, deps: [pais] });
 
   const ingresos = useMemo(
     () => (allIngresos ?? []).filter((r) => r.fecha >= desde && r.fecha <= hasta),
@@ -135,6 +136,9 @@ export default function ReportesPage() {
   const getContacto = (id?: number | null) =>
     contactos?.find((c) => c.id === id)?.nombre ?? "";
 
+  const getCuenta = (id?: string | null) =>
+    cuentas?.find((c) => c.id === id)?.nombre ?? "";
+
   function exportXLSX() {
     type Row = {
       Tipo: string;
@@ -142,11 +146,11 @@ export default function ReportesPage() {
       Concepto: string;
       Categoría: string;
       Contacto: string;
+      Cuenta: string;
       Moneda: string;
       Monto: number;
       "Tipo de cambio": number;
       [`Monto ${moneda}`]: number;
-      Estado: string;
       "Nro. comprobante": string;
     };
 
@@ -159,43 +163,67 @@ export default function ReportesPage() {
         Concepto: i.concepto ?? "",
         Categoría: i.categoria ?? "",
         Contacto: getContacto(i.contacto_id),
+        Cuenta: getCuenta(i.cuenta_id),
         Moneda: i.moneda,
         Monto: Number(i.monto),
         "Tipo de cambio": Number(i.tasa_cambio || 1),
         [`Monto ${moneda}`]: toLocal(Number(i.monto), i.moneda, Number(i.tasa_cambio || 1), moneda),
-        Estado: "",
         "Nro. comprobante": i.referencia ?? "",
       });
     });
 
     pagos.forEach((g) => {
+      const fps = (g.factura_pagos ?? []) as { factura_id: number; numero_factura: string | null }[];
+      const esPagoFactura = fps.length > 0;
+
+      // Concepto: solo números de factura (sin nombre del proveedor)
+      const conceptoText = esPagoFactura
+        ? fps.map((fp) => fp.numero_factura ?? `#${fp.factura_id}`).join(", ")
+        : (Array.isArray(g.items) && g.items.length > 0
+            ? (g.items as { concepto_nombre?: string }[]).map((it) => it.concepto_nombre).filter(Boolean).join(", ")
+            : g.concepto ?? "");
+
+      // Categoría: conceptos únicos de las facturas vinculadas (sin repetir)
+      let categoriaText = g.categoria ?? "";
+      if (esPagoFactura) {
+        const uniqueConcepts = new Set<string>();
+        for (const fp of fps) {
+          const items = (facturaItemsMap[fp.factura_id] ?? []) as { concepto_nombre?: string }[];
+          for (const item of items) {
+            if (item.concepto_nombre) uniqueConcepts.add(item.concepto_nombre);
+          }
+        }
+        if (uniqueConcepts.size > 0) categoriaText = [...uniqueConcepts].join(", ");
+      }
+
       rows.push({
-        Tipo: g.factura_pagos ? "Pago de factura" : "Gasto directo",
+        Tipo: esPagoFactura ? "Pago de factura" : "Pago sin factura",
         Fecha: g.fecha,
-        Concepto: g.concepto ?? "",
-        Categoría: g.categoria ?? "",
+        Concepto: conceptoText,
+        Categoría: categoriaText,
         Contacto: getContacto(g.contacto_id),
+        Cuenta: getCuenta(g.cuenta_id),
         Moneda: g.moneda,
         Monto: -Number(g.total),
         "Tipo de cambio": Number(g.tasa_cambio || 1),
         [`Monto ${moneda}`]: -toLocal(Number(g.total), g.moneda, Number(g.tasa_cambio || 1), moneda),
-        Estado: g.estado ?? "",
-        "Nro. comprobante": g.numero_factura ?? "",
+        "Nro. comprobante": "",
       });
     });
 
-    notas.forEach((n) => {
+    // Notas de crédito emitidas únicamente (recibidas excluidas del reporte)
+    notas.filter((n) => n.tipo === "emitida").forEach((n) => {
       rows.push({
-        Tipo: n.tipo === "emitida" ? "Nota cred. emitida" : "Nota cred. recibida",
+        Tipo: "Nota cred. emitida",
         Fecha: n.fecha,
         Concepto: n.concepto ?? "",
         Categoría: n.motivo ?? "",
         Contacto: getContacto(n.contacto_id),
+        Cuenta: "",
         Moneda: n.moneda,
         Monto: Number(n.monto),
         "Tipo de cambio": Number(n.tasa_cambio || 1),
         [`Monto ${moneda}`]: toLocal(Number(n.monto), n.moneda, Number(n.tasa_cambio || 1), moneda),
-        Estado: "",
         "Nro. comprobante": n.numero ?? "",
       });
     });
@@ -207,14 +235,14 @@ export default function ReportesPage() {
       { wch: 18 }, // Tipo
       { wch: 12 }, // Fecha
       { wch: 36 }, // Concepto
-      { wch: 28 }, // Categoría
+      { wch: 32 }, // Categoría
       { wch: 24 }, // Contacto
+      { wch: 20 }, // Cuenta
       { wch: 8 },  // Moneda
       { wch: 14 }, // Monto
       { wch: 14 }, // Tipo de cambio
       { wch: 18 }, // Monto local
-      { wch: 12 }, // Estado
-      { wch: 18 }, // Nro. comprobante
+      { wch: 20 }, // Nro. comprobante
     ];
 
     const wb = XLSX.utils.book_new();

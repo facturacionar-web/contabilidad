@@ -123,6 +123,14 @@ export default function CuentasPage() {
   }
 
   async function remove(c: Cuenta) {
+    const movimientos = [
+      ...(ingresos ?? []).filter((i) => i.cuenta_id === c.id),
+      ...(gastos ?? []).filter((g) => g.cuenta_id === c.id),
+    ];
+    if (movimientos.length > 0) {
+      alert(`No se puede eliminar "${c.nombre}" porque tiene ${movimientos.length} movimiento${movimientos.length !== 1 ? "s" : ""} asociado${movimientos.length !== 1 ? "s" : ""}.`);
+      return;
+    }
     if (!confirm(`¿Eliminar la cuenta "${c.nombre}"?`)) return;
     try {
       await deleteRow("cuentas", c.id);

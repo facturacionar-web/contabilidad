@@ -35,7 +35,7 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         <div className="flex items-center gap-2 justify-center mb-8">
           <Wallet className="w-7 h-7 text-[var(--primary)]" />
-          <span className="text-xl font-semibold">Contabilidad</span>
+          <span className="text-xl font-semibold">Alegrant</span>
         </div>
         <div className="card">
           <h1 className="text-xl font-semibold mb-1">Ingresá a tu cuenta</h1>
@@ -80,10 +80,7 @@ export default function LoginPage() {
           </form>
         </div>
         <p className="text-sm text-center text-[var(--muted)] mt-6">
-          ¿No tenés cuenta?{" "}
-          <Link href="/signup" className="text-[var(--primary)] font-medium hover:underline">
-            Registrate
-          </Link>
+          El acceso es solo por invitación del administrador.
         </p>
       </div>
     </div>

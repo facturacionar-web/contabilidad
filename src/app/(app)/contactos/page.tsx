@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTable, insertRow, updateRow, deleteRow, paisFilter } from "@/lib/useSupabaseData";
+import { createClient } from "@/lib/supabase/client";
 import type { Contacto, ContactoTipo } from "@/lib/types";
 import { useConfig } from "@/lib/useConfig";
 import { COUNTRIES } from "@/lib/countries";
@@ -136,6 +137,23 @@ export default function ContactosPage() {
   }
 
   async function remove(c: Contacto) {
+    // Verificar que no tenga registros asociados antes de borrar
+    try {
+      const supabase = createClient();
+      const [{ count: ci }, { count: cg }, { count: cn }] = await Promise.all([
+        supabase.from("ingresos").select("id", { count: "exact", head: true }).eq("contacto_id", c.id),
+        supabase.from("gastos").select("id", { count: "exact", head: true }).eq("contacto_id", c.id),
+        supabase.from("notas_credito").select("id", { count: "exact", head: true }).eq("contacto_id", c.id),
+      ]);
+      const total = (ci ?? 0) + (cg ?? 0) + (cn ?? 0);
+      if (total > 0) {
+        alert(`No se puede eliminar "${c.nombre}" porque tiene ${total} registro${total !== 1 ? "s" : ""} asociado${total !== 1 ? "s" : ""} (ingresos, pagos, facturas o notas de crédito).`);
+        return;
+      }
+    } catch (err) {
+      alert("Error al verificar: " + (err as Error).message);
+      return;
+    }
     if (!confirm(`¿Eliminar a ${c.nombre}?`)) return;
     try {
       await deleteRow("contactos", c.id);

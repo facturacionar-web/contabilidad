@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "contabilidad",
-      "runtimeExecutable": "C:\\Users\\cuent\\nodejs\\npm.cmd",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "C:\\CLAUDE\\contabilidad\\.claude\\run-dev.cmd"],
       "port": 3000
     }
   ]

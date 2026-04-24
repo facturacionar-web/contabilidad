@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useTable, insertRow, updateRow, deleteRow, paisFilter } from "@/lib/useSupabaseData";
+import { createClient } from "@/lib/supabase/client";
 import type { Concepto, ConceptoTipo } from "@/lib/types";
 import { useConfig } from "@/lib/useConfig";
 import { formatDate } from "@/lib/format";
@@ -90,6 +91,22 @@ export default function ConceptosPage() {
   }
 
   async function remove(c: Concepto) {
+    // Verificar que no esté en uso antes de borrar
+    try {
+      const supabase = createClient();
+      const [{ count: ci }, { count: cg }] = await Promise.all([
+        supabase.from("ingresos").select("id", { count: "exact", head: true }).eq("concepto_id", c.id),
+        supabase.from("gastos").select("id", { count: "exact", head: true }).eq("concepto_id", c.id),
+      ]);
+      const total = (ci ?? 0) + (cg ?? 0);
+      if (total > 0) {
+        alert(`No se puede eliminar "${c.nombre}" porque está en uso en ${total} registro${total !== 1 ? "s" : ""}.`);
+        return;
+      }
+    } catch (err) {
+      alert("Error al verificar: " + (err as Error).message);
+      return;
+    }
     if (!confirm(`¿Eliminar el concepto "${c.nombre}"?`)) return;
     try {
       await deleteRow("conceptos", c.id);

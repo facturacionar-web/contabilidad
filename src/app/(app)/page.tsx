@@ -1,6 +1,4 @@
 "use client";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { useTable, paisFilter } from "@/lib/useSupabaseData";
 import { useConfig } from "@/lib/useConfig";
 import { formatMoney, formatDate, monthRange, todayISO } from "@/lib/format";
@@ -11,21 +9,28 @@ import {
   Users,
   Wallet,
   ArrowRight,
-  Search,
 } from "lucide-react";
 import Link from "next/link";
 import PageHeader from "@/components/PageHeader";
 
 export default function Dashboard() {
-  const router = useRouter();
   const { config, country } = useConfig();
   const pais = config?.pais;
-  const [search, setSearch] = useState("");
-  const [searchFocus, setSearchFocus] = useState(false);
   const { start, end } = monthRange(todayISO());
 
   const { data: ingresos } = useTable("ingresos", { orderBy: "fecha", filter: paisFilter(pais), skip: !pais, deps: [pais] });
-  const { data: gastos } = useTable("gastos", { orderBy: "fecha", filter: paisFilter(pais), skip: !pais, deps: [pais] });
+  // Pagos reales (tipo="gasto") — filtro en DB para no mezclar con facturas
+  const { data: pagosDB } = useTable("gastos", {
+    orderBy: "fecha",
+    filter: [...(paisFilter(pais) ?? []), { column: "tipo", op: "eq", value: "gasto" }],
+    skip: !pais, deps: [pais],
+  });
+  // Facturas — solo para calcular "por pagar"
+  const { data: facturasDB } = useTable("gastos", {
+    orderBy: "fecha",
+    filter: [...(paisFilter(pais) ?? []), { column: "tipo", op: "eq", value: "factura_proveedor" }],
+    skip: !pais, deps: [pais],
+  });
   const { data: notas } = useTable("notas_credito", { orderBy: "fecha", filter: paisFilter(pais), skip: !pais, deps: [pais] });
   const { data: contactos } = useTable("contactos", { orderBy: "nombre", ascending: true, filter: paisFilter(pais), skip: !pais, deps: [pais] });
 
@@ -33,27 +38,24 @@ export default function Dashboard() {
     (rows ?? []).filter((r) => r.fecha >= start && r.fecha <= end);
 
   const ingresosMes = inRange(ingresos);
-  const gastosMes = inRange(gastos);
   const notasMes = inRange(notas);
+  const pagosMes = inRange(pagosDB);
 
-  const base = config?.moneda_base ?? "MXN";
-  const sumIngresos = ingresosMes
-    .filter((x) => x.moneda === base)
-    .reduce((s, x) => s + Number(x.monto), 0);
-  const sumGastos = gastosMes
-    .filter((x) => x.moneda === base)
-    .reduce((s, x) => s + Number(x.total), 0);
-  const sumNotas = notasMes
-    .filter((x) => x.moneda === base)
-    .reduce((s, x) => s + Number(x.monto), 0);
+  const base = config?.moneda_base ?? "ARS";
+  const toLocal = (amount: number, mon: string, tasa: number) =>
+    mon === base ? amount : amount * (tasa || 1);
+
+  const sumIngresos = ingresosMes.reduce((s, x) => s + toLocal(Number(x.monto), x.moneda, Number(x.tasa_cambio || 1)), 0);
+  const sumGastos = pagosMes.reduce((s, g) => s + toLocal(Number(g.total), g.moneda, Number(g.tasa_cambio || 1)), 0);
+  const sumNotas = notasMes.reduce((s, x) => s + toLocal(Number(x.monto), x.moneda, Number(x.tasa_cambio || 1)), 0);
   const balance = sumIngresos - sumGastos;
 
-  const pendientes = (gastos ?? []).filter(
+  const pendientes = (facturasDB ?? []).filter(
     (g) => g.estado === "pendiente" || g.estado === "parcial"
   );
-  const pendientesMonto = pendientes
-    .filter((g) => g.moneda === base)
-    .reduce((s, g) => s + (Number(g.total) - Number(g.monto_pagado)), 0);
+  const pendientesMonto = pendientes.reduce(
+    (s, g) => s + toLocal(Number(g.total) - Number(g.monto_pagado), g.moneda, Number(g.tasa_cambio || 1)), 0
+  );
 
   const kpis = [
     { label: "Ingresos del mes", value: sumIngresos, icon: TrendingUp, color: "text-green-600", bg: "bg-green-50" },
@@ -63,14 +65,7 @@ export default function Dashboard() {
   ];
 
   const recentIngresos = [...ingresosMes].sort((a, b) => b.fecha.localeCompare(a.fecha)).slice(0, 5);
-  const recentGastos = [...gastosMes].sort((a, b) => b.fecha.localeCompare(a.fecha)).slice(0, 5);
-
-  const contactosFiltrados = search.trim()
-    ? (contactos ?? []).filter((c) =>
-        c.nombre.toLowerCase().includes(search.toLowerCase()) ||
-        (c.tax_id?.toLowerCase() ?? "").includes(search.toLowerCase())
-      ).slice(0, 6)
-    : [];
+  const recentGastos = [...pagosMes].sort((a, b) => b.fecha.localeCompare(a.fecha)).slice(0, 5);
 
   return (
     <>
@@ -78,32 +73,6 @@ export default function Dashboard() {
         title={`Hola, ${config?.empresa_nombre ?? ""}`}
         description={`Resumen de ${new Date().toLocaleDateString(country.locale, { month: "long", year: "numeric" })} (moneda base ${base})`}
       />
-
-      <div className="relative mb-6 max-w-md">
-        <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
-        <input
-          className="input pl-9 w-full"
-          placeholder="Buscar contacto por nombre o CUIT…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          onFocus={() => setSearchFocus(true)}
-          onBlur={() => setTimeout(() => setSearchFocus(false), 150)}
-        />
-        {(searchFocus || search) && contactosFiltrados.length > 0 && (
-          <div className="absolute top-full mt-1 w-full bg-white border border-[var(--border)] rounded-xl shadow-lg z-50 overflow-hidden">
-            {contactosFiltrados.map((c) => (
-              <button
-                key={c.id}
-                className="w-full px-4 py-2.5 text-left hover:bg-slate-50 flex items-center justify-between gap-3"
-                onClick={() => { setSearch(""); router.push(`/contactos/${c.id}`); }}
-              >
-                <span className="font-medium text-sm">{c.nombre}</span>
-                <span className="text-xs text-[var(--muted)] shrink-0">{c.tipo} {c.tax_id ? `· ${c.tax_id}` : ""}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         {kpis.map((k) => {
@@ -128,18 +97,19 @@ export default function Dashboard() {
           href="/ingresos/pagos-recibidos"
           empty="Aún no hay ingresos registrados este mes."
           rows={recentIngresos.map((i) => ({
-            id: i.id, label: i.concepto, sublabel: i.categoria,
+            id: i.id, label: `#${i.id}`, sublabel: i.concepto,
             amount: Number(i.monto), currency: i.moneda, date: i.fecha, positive: true,
           }))}
           locale={country.locale}
         />
         <RecentList
-          title="Últimos gastos"
-          href="/egresos/facturas"
-          empty="Aún no hay gastos registrados este mes."
+          title="Últimos pagos"
+          href="/egresos/pagos"
+          empty="Aún no hay pagos registrados este mes."
           rows={recentGastos.map((g) => ({
-            id: g.id, label: g.concepto,
-            sublabel: g.tipo === "factura_proveedor" ? "Factura proveedor" : g.categoria,
+            id: g.id,
+            label: `#${g.id}`,
+            sublabel: g.concepto,
             amount: Number(g.total), currency: g.moneda, date: g.fecha, positive: false,
           }))}
           locale={country.locale}

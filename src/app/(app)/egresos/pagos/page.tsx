@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { Gasto, GastoEstado, FacturaPago, Retencion, FacturaItem } from "@/lib/types";
 import { useConfig } from "@/lib/useConfig";
 import { CURRENCIES, CurrencyCode, PAYMENT_METHODS, monedasDisponibles } from "@/lib/countries";
-import { formatMoney, formatDate, todayISO } from "@/lib/format";
+import { formatMoney, formatDate, todayISO, parseMonto } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
 import Modal from "@/components/Modal";
 import EmptyState from "@/components/EmptyState";
@@ -96,6 +96,10 @@ export default function PagosEgresosPage() {
   const [editing, setEditing] = useState<Gasto | null>(null);
   const [form, setForm] = useState<FormState>(blank(monedas[0] ?? "ARS"));
   const [search, setSearch] = useState("");
+  const [fechaDesde, setFechaDesde] = useState("");
+  const [fechaHasta, setFechaHasta] = useState("");
+  const [filtroProveedor, setFiltroProveedor] = useState<number | "">("");
+  const [filtroCuenta, setFiltroCuenta] = useState("");
   const [saving, setSaving] = useState(false);
   const autoOpenedRef = useRef(false);
   const autoEditedRef = useRef(false);
@@ -165,11 +169,31 @@ export default function PagosEgresosPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.contacto_id, facturasPendientes.length]);
 
-  const filtered = (pagos ?? []).filter(g => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return g.concepto.toLowerCase().includes(q);
-  });
+  const hayFiltros = search || fechaDesde || fechaHasta || filtroProveedor !== "" || filtroCuenta;
+
+  const filtered = useMemo(() => (pagos ?? []).filter(g => {
+    if (search) {
+      const q = search.toLowerCase();
+      const fps = g.factura_pagos ?? [];
+      const detalle = fps.length > 0
+        ? fps.map(fp => fp.numero_factura ?? "").join(" ")
+        : g.concepto;
+      if (!detalle.toLowerCase().includes(q)) return false;
+    }
+    if (fechaDesde && g.fecha < fechaDesde) return false;
+    if (fechaHasta && g.fecha > fechaHasta) return false;
+    if (filtroProveedor !== "" && g.contacto_id !== filtroProveedor) return false;
+    if (filtroCuenta && g.cuenta_id !== filtroCuenta) return false;
+    return true;
+  }), [pagos, search, fechaDesde, fechaHasta, filtroProveedor, filtroCuenta]);
+
+  function limpiarFiltros() {
+    setSearch("");
+    setFechaDesde("");
+    setFechaHasta("");
+    setFiltroProveedor("");
+    setFiltroCuenta("");
+  }
 
   const isForeign = form.moneda !== base;
 
@@ -392,11 +416,34 @@ export default function PagosEgresosPage() {
       />
 
       <div className="card p-0 overflow-hidden">
-        <div className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between">
-          <div className="relative">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
-            <input className="input pl-9 sm:w-72" placeholder="Buscar pagos…" value={search} onChange={e => setSearch(e.target.value)} />
+        <div className="px-5 py-3 border-b border-[var(--border)] space-y-2">
+          <div className="flex flex-wrap gap-2 items-center">
+            <div className="relative">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+              <input className="input pl-9 w-52" placeholder="Detalle…" value={search} onChange={e => setSearch(e.target.value)} />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <input type="date" className="input w-36 text-sm" placeholder="Desde" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)} title="Fecha desde" />
+              <span className="text-[var(--muted)] text-sm">—</span>
+              <input type="date" className="input w-36 text-sm" placeholder="Hasta" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)} title="Fecha hasta" />
+            </div>
+            <select className="select w-44 text-sm" value={filtroProveedor} onChange={e => setFiltroProveedor(e.target.value === "" ? "" : Number(e.target.value))}>
+              <option value="">Todos los proveedores</option>
+              {proveedores.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+            </select>
+            <select className="select w-44 text-sm" value={filtroCuenta} onChange={e => setFiltroCuenta(e.target.value)}>
+              <option value="">Todas las cuentas</option>
+              {(cuentas ?? []).map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+            </select>
+            {hayFiltros && (
+              <button className="btn btn-ghost text-sm text-[var(--muted)] flex items-center gap-1" onClick={limpiarFiltros}>
+                <X className="w-3.5 h-3.5" /> Limpiar
+              </button>
+            )}
           </div>
+          {hayFiltros && (
+            <p className="text-xs text-[var(--muted)]">{filtered.length} resultado{filtered.length !== 1 ? "s" : ""}</p>
+          )}
         </div>
 
         {filtered.length === 0 ? (
@@ -421,7 +468,11 @@ export default function PagosEgresosPage() {
                 const fps = g.factura_pagos ?? [];
                 return (
                   <tr key={g.id}>
-                    <td className="text-center text-[var(--muted)] font-medium">{g.id}</td>
+                    <td className="text-center font-medium">
+                      <Link href={`/egresos/pagos/${g.id}`} className="hover:underline hover:text-[var(--primary)] text-[var(--muted)]">
+                        {g.id}
+                      </Link>
+                    </td>
                     <td className="whitespace-nowrap">{formatDate(g.fecha, country.locale)}</td>
                     <td className="max-w-xs">
                       {fps.length > 0
@@ -501,8 +552,8 @@ export default function PagosEgresosPage() {
                 <label className="label">Tasa de cambio</label>
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-[var(--muted)]">1 {form.moneda} =</span>
-                  <input type="number" step="0.01" min="0" className="input flex-1"
-                    value={form.tasa_cambio || ""} onChange={e => setForm(f => ({ ...f, tasa_cambio: parseFloat(e.target.value) || 0 }))} />
+                  <input type="text" inputMode="decimal" className="input flex-1"
+                    value={form.tasa_cambio || ""} onChange={e => setForm(f => ({ ...f, tasa_cambio: parseMonto(e.target.value) }))} />
                   <span className="text-sm text-[var(--muted)]">{base}</span>
                 </div>
               </div>
@@ -563,10 +614,10 @@ export default function PagosEgresosPage() {
                           </div>
                           <div>
                             <label className="text-xs text-[var(--muted)]">Monto a pagar *</label>
-                            <input type="number" step="0.01" min="0" className="input text-sm py-1"
+                            <input type="text" inputMode="decimal" className="input text-sm py-1"
                               placeholder="0.00" value={fp.monto || ""}
                               onClick={() => { if (!fp.monto) setFP(fp.factura_id, { monto: porPagar }); }}
-                              onChange={e => setFP(fp.factura_id, { monto: parseFloat(e.target.value) || 0 })} />
+                              onChange={e => setFP(fp.factura_id, { monto: parseMonto(e.target.value) })} />
                           </div>
                         </div>
 
@@ -578,9 +629,9 @@ export default function PagosEgresosPage() {
                                 value={r.tipo} onChange={e => updateRetencion(fp.factura_id, r.key, { tipo: e.target.value })}>
                                 {TIPOS_RETENCION.map(t => <option key={t} value={t}>{t}</option>)}
                               </select>
-                              <input type="number" step="0.01" min="0" className="input text-xs py-1 w-36"
+                              <input type="text" inputMode="decimal" className="input text-xs py-1 w-36"
                                 placeholder="Monto" value={r.monto || ""}
-                                onChange={e => updateRetencion(fp.factura_id, r.key, { monto: parseFloat(e.target.value) || 0 })} />
+                                onChange={e => updateRetencion(fp.factura_id, r.key, { monto: parseMonto(e.target.value) })} />
                               <button type="button" className="text-[var(--muted)] hover:text-red-500"
                                 onClick={() => removeRetencion(fp.factura_id, r.key)}>
                                 <X className="w-3.5 h-3.5" />
@@ -626,11 +677,11 @@ export default function PagosEgresosPage() {
                     {conceptos.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                   </select>
                   <input
-                    type="number" step="0.01" min="0"
+                    type="text" inputMode="decimal"
                     className="input w-36 text-sm py-1"
                     placeholder="0.00"
                     value={l.monto || ""}
-                    onChange={e => updateLinea(l.key, { monto: parseFloat(e.target.value) || 0 })}
+                    onChange={e => updateLinea(l.key, { monto: parseMonto(e.target.value) })}
                   />
                   <button
                     type="button"
@@ -658,11 +709,11 @@ export default function PagosEgresosPage() {
                   <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
                     <span className="text-amber-800 text-sm">1 {form.moneda} =</span>
                     <input
-                      type="number" step="0.01" min="0"
+                      type="text" inputMode="decimal"
                       className="input w-32 text-sm py-1 mx-2"
                       placeholder="Tasa de cambio"
                       value={form.tasa_cambio || ""}
-                      onChange={e => setForm(f => ({ ...f, tasa_cambio: parseFloat(e.target.value) || 0 }))}
+                      onChange={e => setForm(f => ({ ...f, tasa_cambio: parseMonto(e.target.value) }))}
                     />
                     <span className="text-amber-800 text-sm">{base}</span>
                   </div>

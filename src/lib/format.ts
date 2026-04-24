@@ -43,6 +43,27 @@ function toISO(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+/** Parsea un string de monto ingresado por el usuario, tolerando coma o punto como decimal y separadores de miles. */
+export function parseMonto(val: string): number {
+  if (!val) return 0;
+  const s = val.trim();
+  const lastComma = s.lastIndexOf(",");
+  const lastDot = s.lastIndexOf(".");
+  const dotCount = (s.match(/\./g) || []).length;
+  let normalized: string;
+  if (lastComma > lastDot) {
+    // Formato AR/ES: 1.234.567,89 o 1234567,89
+    normalized = s.replace(/\./g, "").replace(",", ".");
+  } else if (dotCount > 1) {
+    // Múltiples puntos sin coma → todos son miles: 2.000.000
+    normalized = s.replace(/\./g, "");
+  } else {
+    // Punto único como decimal (EN) o sin separadores: 2000000.99 o 2000000
+    normalized = s.replace(/,/g, "");
+  }
+  return parseFloat(normalized) || 0;
+}
+
 export function monthRange(isoDate: string): { start: string; end: string } {
   const [y, m] = isoDate.split("-").map(Number);
   const start = toISO(new Date(y, m - 1, 1));
