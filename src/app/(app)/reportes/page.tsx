@@ -7,6 +7,7 @@ import { formatMoney, todayISO } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
 import { Download, TrendingUp, TrendingDown, Wallet } from "lucide-react";
 import Link from "next/link";
+import * as XLSX from "xlsx";
 
 function firstDayOfMonth() {
   const d = new Date();
@@ -134,71 +135,91 @@ export default function ReportesPage() {
   const getContacto = (id?: number | null) =>
     contactos?.find((c) => c.id === id)?.nombre ?? "";
 
-  function exportCSV() {
-    const rows: string[] = [];
-    rows.push("Tipo,Fecha,Concepto,Categoria,Contacto,Moneda,Monto,TasaCambio,MontoPesos,Estado,Numero");
+  function exportXLSX() {
+    type Row = {
+      Tipo: string;
+      Fecha: string;
+      Concepto: string;
+      Categoría: string;
+      Contacto: string;
+      Moneda: string;
+      Monto: number;
+      "Tipo de cambio": number;
+      [`Monto ${moneda}`]: number;
+      Estado: string;
+      "Nro. comprobante": string;
+    };
+
+    const rows: Row[] = [];
 
     ingresos.forEach((i) => {
-      rows.push(
-        [
-          "Ingreso",
-          i.fecha,
-          csvEsc(i.concepto),
-          csvEsc(i.categoria),
-          csvEsc(getContacto(i.contacto_id)),
-          i.moneda,
-          Number(i.monto),
-          Number(i.tasa_cambio || 1),
-          toLocal(Number(i.monto), i.moneda, Number(i.tasa_cambio || 1), moneda),
-          "",
-          csvEsc(i.referencia ?? ""),
-        ].join(",")
-      );
-    });
-    gastos.filter((g) => g.tipo !== "gasto" || !g.factura_pagos).forEach((g) => {
-      rows.push(
-        [
-          g.tipo === "factura_proveedor" ? "Factura prov." : "Gasto",
-          g.fecha,
-          csvEsc(g.concepto),
-          csvEsc(g.categoria),
-          csvEsc(getContacto(g.contacto_id)),
-          g.moneda,
-          -Number(g.total),
-          Number(g.tasa_cambio || 1),
-          -toLocal(Number(g.total), g.moneda, Number(g.tasa_cambio || 1), moneda),
-          g.estado,
-          csvEsc(g.numero_factura ?? ""),
-        ].join(",")
-      );
-    });
-    notas.forEach((n) => {
-      rows.push(
-        [
-          n.tipo === "emitida" ? "Nota cred. emitida" : "Nota cred. recibida",
-          n.fecha,
-          csvEsc(n.concepto),
-          csvEsc(n.motivo),
-          csvEsc(getContacto(n.contacto_id)),
-          n.moneda,
-          Number(n.monto),
-          Number(n.tasa_cambio || 1),
-          toLocal(Number(n.monto), n.moneda, Number(n.tasa_cambio || 1), moneda),
-          "",
-          csvEsc(n.numero ?? ""),
-        ].join(",")
-      );
+      rows.push({
+        Tipo: "Ingreso",
+        Fecha: i.fecha,
+        Concepto: i.concepto ?? "",
+        Categoría: i.categoria ?? "",
+        Contacto: getContacto(i.contacto_id),
+        Moneda: i.moneda,
+        Monto: Number(i.monto),
+        "Tipo de cambio": Number(i.tasa_cambio || 1),
+        [`Monto ${moneda}`]: toLocal(Number(i.monto), i.moneda, Number(i.tasa_cambio || 1), moneda),
+        Estado: "",
+        "Nro. comprobante": i.referencia ?? "",
+      });
     });
 
-    const blob = new Blob(["\uFEFF" + rows.join("\n")], {
-      type: "text/csv;charset=utf-8",
+    pagos.forEach((g) => {
+      rows.push({
+        Tipo: g.factura_pagos ? "Pago de factura" : "Gasto directo",
+        Fecha: g.fecha,
+        Concepto: g.concepto ?? "",
+        Categoría: g.categoria ?? "",
+        Contacto: getContacto(g.contacto_id),
+        Moneda: g.moneda,
+        Monto: -Number(g.total),
+        "Tipo de cambio": Number(g.tasa_cambio || 1),
+        [`Monto ${moneda}`]: -toLocal(Number(g.total), g.moneda, Number(g.tasa_cambio || 1), moneda),
+        Estado: g.estado ?? "",
+        "Nro. comprobante": g.numero_factura ?? "",
+      });
     });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `reporte_${desde}_a_${hasta}_${moneda}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+
+    notas.forEach((n) => {
+      rows.push({
+        Tipo: n.tipo === "emitida" ? "Nota cred. emitida" : "Nota cred. recibida",
+        Fecha: n.fecha,
+        Concepto: n.concepto ?? "",
+        Categoría: n.motivo ?? "",
+        Contacto: getContacto(n.contacto_id),
+        Moneda: n.moneda,
+        Monto: Number(n.monto),
+        "Tipo de cambio": Number(n.tasa_cambio || 1),
+        [`Monto ${moneda}`]: toLocal(Number(n.monto), n.moneda, Number(n.tasa_cambio || 1), moneda),
+        Estado: "",
+        "Nro. comprobante": n.numero ?? "",
+      });
+    });
+
+    rows.sort((a, b) => a.Fecha.localeCompare(b.Fecha));
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws["!cols"] = [
+      { wch: 18 }, // Tipo
+      { wch: 12 }, // Fecha
+      { wch: 36 }, // Concepto
+      { wch: 28 }, // Categoría
+      { wch: 24 }, // Contacto
+      { wch: 8 },  // Moneda
+      { wch: 14 }, // Monto
+      { wch: 14 }, // Tipo de cambio
+      { wch: 18 }, // Monto local
+      { wch: 12 }, // Estado
+      { wch: 18 }, // Nro. comprobante
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Reporte");
+    XLSX.writeFile(wb, `reporte_${desde}_a_${hasta}.xlsx`);
   }
 
   return (
@@ -207,8 +228,8 @@ export default function ReportesPage() {
         title="Reportes"
         description="Análisis del periodo seleccionado"
         action={
-          <button className="btn btn-primary" onClick={exportCSV}>
-            <Download className="w-4 h-4" /> Exportar CSV
+          <button className="btn btn-primary" onClick={exportXLSX}>
+            <Download className="w-4 h-4" /> Exportar XLSX
           </button>
         }
       />
@@ -309,12 +330,6 @@ export default function ReportesPage() {
   );
 }
 
-function csvEsc(s: string) {
-  if (s.includes(",") || s.includes('"') || s.includes("\n")) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
-}
 
 function KPICard({
   label,
