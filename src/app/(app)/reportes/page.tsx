@@ -64,9 +64,23 @@ export default function ReportesPage() {
 
   const porCategoriaGastos = useMemo(() => {
     const map: Record<string, number> = {};
+    // Pagos directos con concepto
     gastosMoneda.filter((g) => g.tipo === "gasto" && g.concepto_id).forEach((g) => {
       const key = g.categoria || "Sin categoría";
       map[key] = (map[key] ?? 0) + Number(g.total);
+    });
+    // Facturas pagadas — distribuir por sus items
+    gastosMoneda.filter((g) => g.tipo === "factura_proveedor" && g.estado === "pagado").forEach((g) => {
+      const items: { concepto_nombre?: string; total?: number }[] = Array.isArray(g.items) ? g.items : [];
+      if (items.length > 0) {
+        items.forEach((item) => {
+          const key = item.concepto_nombre || g.categoria || "Sin categoría";
+          map[key] = (map[key] ?? 0) + Number(item.total ?? 0);
+        });
+      } else {
+        const key = g.categoria || "Sin categoría";
+        map[key] = (map[key] ?? 0) + Number(g.total);
+      }
     });
     return Object.entries(map).sort((a, b) => b[1] - a[1]);
   }, [gastosMoneda]);
