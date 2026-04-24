@@ -50,8 +50,14 @@ export default function ReportesPage() {
   const gastosMoneda = gastos.filter((g) => g.moneda === moneda);
   const notasMoneda = notas.filter((n) => n.moneda === moneda);
 
+  // Facturas pagadas + pagos directos (sin factura_pagos para no duplicar facturas)
+  const gastosEfectivos = gastosMoneda.filter((g) =>
+    (g.tipo === "factura_proveedor" && g.estado === "pagado") ||
+    (g.tipo === "gasto" && !g.factura_pagos)
+  );
+
   const totalIngresos = ingresosMoneda.reduce((s, i) => s + Number(i.monto), 0);
-  const totalGastos = gastosMoneda.reduce((s, g) => s + Number(g.total), 0);
+  const totalGastos = gastosEfectivos.reduce((s, g) => s + Number(g.total), 0);
   const balance = totalIngresos - totalGastos;
 
   const porCategoriaIngresos = useMemo(() => {
@@ -64,30 +70,29 @@ export default function ReportesPage() {
 
   const porCategoriaGastos = useMemo(() => {
     const map: Record<string, number> = {};
-    // Pagos directos con concepto
-    gastosMoneda.filter((g) => g.tipo === "gasto" && g.concepto_id).forEach((g) => {
-      const key = g.categoria || "Sin categoría";
-      map[key] = (map[key] ?? 0) + Number(g.total);
-    });
-    // Facturas pagadas — distribuir por sus items
-    gastosMoneda.filter((g) => g.tipo === "factura_proveedor" && g.estado === "pagado").forEach((g) => {
-      const items: { concepto_nombre?: string; total?: number }[] = Array.isArray(g.items) ? g.items : [];
-      if (items.length > 0) {
-        items.forEach((item) => {
-          const key = item.concepto_nombre || g.categoria || "Sin categoría";
-          map[key] = (map[key] ?? 0) + Number(item.total ?? 0);
-        });
-      } else {
+    gastosEfectivos.forEach((g) => {
+      if (g.tipo === "factura_proveedor") {
+        const items: { concepto_nombre?: string; total?: number }[] = Array.isArray(g.items) ? g.items : [];
+        if (items.length > 0) {
+          items.forEach((item) => {
+            const key = item.concepto_nombre || g.categoria || "Sin categoría";
+            map[key] = (map[key] ?? 0) + Number(item.total ?? 0);
+          });
+        } else {
+          const key = g.categoria || "Sin categoría";
+          map[key] = (map[key] ?? 0) + Number(g.total);
+        }
+      } else if (g.concepto_id) {
         const key = g.categoria || "Sin categoría";
         map[key] = (map[key] ?? 0) + Number(g.total);
       }
     });
     return Object.entries(map).sort((a, b) => b[1] - a[1]);
-  }, [gastosMoneda]);
+  }, [gastosEfectivos]);
 
   const porProveedor = useMemo(() => {
     const map: Record<number, { nombre: string; total: number }> = {};
-    gastosMoneda.forEach((g) => {
+    gastosEfectivos.forEach((g) => {
       if (!g.contacto_id) return;
       const nombre = contactos?.find((c) => c.id === g.contacto_id)?.nombre ?? "—";
       if (!map[g.contacto_id]) map[g.contacto_id] = { nombre, total: 0 };
@@ -96,7 +101,7 @@ export default function ReportesPage() {
     return Object.entries(map)
       .map(([id, { nombre, total }]) => [nombre, total, Number(id)] as [string, number, number])
       .sort((a, b) => b[1] - a[1]).slice(0, 10);
-  }, [gastosMoneda, contactos]);
+  }, [gastosEfectivos, contactos]);
 
   const maxIngCat = Math.max(...porCategoriaIngresos.map(([, v]) => v), 1);
   const maxGastoCat = Math.max(...porCategoriaGastos.map(([, v]) => v), 1);
