@@ -10,7 +10,10 @@ import PageHeader from "@/components/PageHeader";
 import Modal from "@/components/Modal";
 import EmptyState from "@/components/EmptyState";
 import Link from "next/link";
-import { Plus, FileMinus, Pencil, Trash2, Search, X, RotateCcw } from "lucide-react";
+import { Plus, FileMinus, Pencil, Trash2, Search, X, RotateCcw, Loader2 } from "lucide-react";
+import SearchableSelect from "@/components/SearchableSelect";
+import EntityMeta from "@/components/EntityMeta";
+import TasaCambioButton from "@/components/TasaCambioButton";
 
 function calcAplicado(n: NotaCredito): number {
   type AP = { monto: number };
@@ -49,11 +52,22 @@ type FormState = {
   contacto_id: number | "";
   numero: string;
   moneda: CurrencyCode;
+  tasa_cambio: number;
   notas_text: string;
   lineas: LineaNC[];
   aplicaciones: AplicacionFac[];
   devolucion: DevolucionData | null;
 };
+
+function getLastTasaNC(moneda: string): number {
+  if (typeof window === "undefined") return 1;
+  const s = localStorage.getItem(`last_tasa_${moneda}`);
+  return s ? parseFloat(s) || 1 : 1;
+}
+function saveLastTasaNC(moneda: string, t: number): void {
+  if (typeof window === "undefined" || t <= 0) return;
+  localStorage.setItem(`last_tasa_${moneda}`, String(t));
+}
 
 function blank(moneda: CurrencyCode): FormState {
   return {
@@ -61,6 +75,7 @@ function blank(moneda: CurrencyCode): FormState {
     contacto_id: "",
     numero: "",
     moneda,
+    tasa_cambio: getLastTasaNC(moneda),
     notas_text: "",
     lineas: [{ key: nextKey(), concepto_id: "", monto: 0 }],
     aplicaciones: [],
@@ -83,7 +98,7 @@ export default function NotasCreditoPage() {
   const [saving, setSaving] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
 
-  const { data: notas, reload } = useTable("notas_credito", {
+  const { data: notas, reload, loading } = useTable("notas_credito", {
     orderBy: "fecha", filter: paisFilter(pais), skip: !pais, deps: [pais],
   });
   const { data: contactos } = useTable("contactos", {
@@ -141,6 +156,14 @@ export default function NotasCreditoPage() {
     setOpen(true);
   }
 
+  // Atajo N
+  useEffect(() => {
+    const handler = () => openNew();
+    window.addEventListener("app:new", handler);
+    return () => window.removeEventListener("app:new", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monedas]);
+
   function openEdit(n: NotaCredito) {
     setEditing(n);
     setShowPicker(false);
@@ -175,6 +198,7 @@ export default function NotasCreditoPage() {
       contacto_id: n.contacto_id ?? "",
       numero: n.numero ?? "",
       moneda: n.moneda as CurrencyCode,
+      tasa_cambio: Number(n.tasa_cambio ?? 1),
       notas_text: n.notas ?? "",
       lineas,
       aplicaciones,
@@ -259,7 +283,7 @@ export default function NotasCreditoPage() {
           ctx_pais: pais,
           fecha: form.devolucion.fecha,
           tipo: "ingreso_dinero" as const,
-          contacto_id: form.contacto_id === "" ? null : Number(form.contacto_id),
+          contacto_id: !form.contacto_id ? null : Number(form.contacto_id),
           concepto: `Devolución NC${form.numero ? " " + form.numero : ""}`,
           categoria: "devolución",
           cuenta_id: form.devolucion.cuenta_id,
@@ -284,12 +308,13 @@ export default function NotasCreditoPage() {
         ctx_pais: pais,
         fecha: form.fecha,
         tipo: "recibida" as const,
-        contacto_id: form.contacto_id === "" ? null : Number(form.contacto_id),
+        contacto_id: !form.contacto_id ? null : Number(form.contacto_id),
         numero: form.numero || null,
         gasto_relacionado_id: form.aplicaciones[0]?.factura_id ?? null,
         concepto: conceptoNombre,
         monto: totalLineas,
         moneda: form.moneda,
+        tasa_cambio: form.tasa_cambio || 1,
         motivo,
         notas: form.notas_text || null,
         factura_aplicaciones: form.aplicaciones.map(a => ({
@@ -418,7 +443,11 @@ export default function NotasCreditoPage() {
           </div>
         </div>
 
-        {filtered.length === 0 ? (
+        {loading ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="w-6 h-6 animate-spin text-[var(--muted)]" />
+          </div>
+        ) : filtered.length === 0 ? (
           <EmptyState
             icon={<FileMinus className="w-6 h-6" />}
             title={notas?.length ? "Sin resultados" : "Aún no hay notas de crédito"}
@@ -445,7 +474,19 @@ export default function NotasCreditoPage() {
                 return (
                   <tr key={n.id}>
                     <td className="whitespace-nowrap">{formatDate(n.fecha, country.locale)}</td>
-                    <td className="text-[var(--muted)]">{n.numero || "—"}</td>
+                    <td>
+                      {n.numero ? (
+                        <button
+                          type="button"
+                          onClick={() => openEdit(n)}
+                          className="text-[var(--primary)] hover:underline font-medium"
+                        >
+                          {n.numero}
+                        </button>
+                      ) : (
+                        <span className="text-[var(--muted)]">—</span>
+                      )}
+                    </td>
                     <td className="font-medium max-w-xs truncate">{n.concepto}</td>
                     <td className="text-[var(--muted)]">
                       {n.contacto_id
@@ -485,16 +526,21 @@ export default function NotasCreditoPage() {
       {/* ── Modal ── */}
       <Modal open={open} onClose={() => setOpen(false)} title={editing ? "Editar nota de crédito" : "Nueva nota de crédito"} size="xl">
         <form onSubmit={save} className="space-y-5">
+          {editing && (
+            <EntityMeta entity="notas_credito" entityId={editing.id} variant="block" />
+          )}
 
           {/* Header fields */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="label">Proveedor *</label>
-              <select className="select" value={form.contacto_id}
-                onChange={e => setForm(f => ({ ...f, contacto_id: e.target.value === "" ? "" : Number(e.target.value), aplicaciones: [] }))}>
-                <option value="">— Sin proveedor —</option>
-                {proveedores.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-              </select>
+              <SearchableSelect
+                value={form.contacto_id}
+                onChange={v => setForm(f => ({ ...f, contacto_id: v === "" ? "" : Number(v), aplicaciones: [] }))}
+                options={proveedores.map(c => ({ value: c.id, label: c.nombre }))}
+                placeholder="— Sin proveedor —"
+                emptyLabel="— Sin proveedor —"
+              />
             </div>
             <div>
               <label className="label">Número *</label>
@@ -510,11 +556,37 @@ export default function NotasCreditoPage() {
             <div>
               <label className="label">Moneda *</label>
               <select className="select" value={form.moneda}
-                onChange={e => setForm(f => ({ ...f, moneda: e.target.value as CurrencyCode, aplicaciones: [] }))}>
+                onChange={e => {
+                  const moneda = e.target.value as CurrencyCode;
+                  setForm(f => ({ ...f, moneda, tasa_cambio: getLastTasaNC(moneda), aplicaciones: [] }));
+                }}>
                 {monedas.map(code => <option key={code} value={code}>{code} — {CURRENCIES[code].name}</option>)}
               </select>
             </div>
           </div>
+
+          {form.moneda !== (config?.moneda_base ?? "ARS") && (
+            <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 flex-wrap">
+              <span className="text-sm text-amber-800 whitespace-nowrap">1 {form.moneda} =</span>
+              <input
+                type="number" step="0.01" min="0"
+                className="input w-32 text-sm py-1"
+                placeholder="Tasa"
+                value={form.tasa_cambio || ""}
+                onChange={e => {
+                  const t = parseFloat(e.target.value) || 0;
+                  setForm(f => ({ ...f, tasa_cambio: t }));
+                  saveLastTasaNC(form.moneda, t);
+                }}
+              />
+              <span className="text-sm text-amber-800 whitespace-nowrap">{config?.moneda_base ?? "ARS"}</span>
+              <TasaCambioButton
+                moneda={form.moneda}
+                fecha={form.fecha}
+                onChange={(v) => { setForm(f => ({ ...f, tasa_cambio: v })); saveLastTasaNC(form.moneda, v); }}
+              />
+            </div>
+          )}
 
           {/* Concept lines */}
           <div className="border border-[var(--border)] rounded-lg overflow-hidden">
@@ -524,11 +596,15 @@ export default function NotasCreditoPage() {
             <div className="divide-y divide-[var(--border)]">
               {form.lineas.map(l => (
                 <div key={l.key} className="flex items-center gap-3 px-4 py-2.5">
-                  <select className="select w-64 text-sm py-1" value={l.concepto_id}
-                    onChange={e => updateLinea(l.key, { concepto_id: e.target.value })}>
-                    <option value="">— Concepto —</option>
-                    {conceptos.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                  </select>
+                  <SearchableSelect
+                    size="sm"
+                    className="w-64"
+                    value={l.concepto_id}
+                    onChange={v => updateLinea(l.key, { concepto_id: v })}
+                    options={conceptos.map(c => ({ value: c.id, label: c.nombre }))}
+                    placeholder="— Concepto —"
+                    emptyLabel="— Sin concepto —"
+                  />
                   <input type="text" inputMode="decimal" className="input w-36 text-sm py-1" placeholder="0.00"
                     value={l.monto || ""}
                     onChange={e => updateLinea(l.key, { monto: parseMonto(e.target.value) })} />

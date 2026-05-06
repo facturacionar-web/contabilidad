@@ -1,15 +1,19 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useTable, insertRow, updateRow, deleteRow, paisFilter } from "@/lib/useSupabaseData";
 import { createClient } from "@/lib/supabase/client";
 import type { Contacto, ContactoTipo } from "@/lib/types";
 import { useConfig } from "@/lib/useConfig";
-import { COUNTRIES } from "@/lib/countries";
 import PageHeader from "@/components/PageHeader";
 import Modal from "@/components/Modal";
 import EmptyState from "@/components/EmptyState";
 import { Plus, Users, Pencil, Trash2, Search, Loader2 } from "lucide-react";
+import { useSortable } from "@/lib/useSortable";
+import SortHeader from "@/components/SortHeader";
+import { usePagination } from "@/lib/usePagination";
+import Pagination from "@/components/Pagination";
+import EntityMeta from "@/components/EntityMeta";
 
 type FormState = {
   tipo: ContactoTipo;
@@ -43,7 +47,7 @@ export default function ContactosPage() {
   const [saving, setSaving] = useState(false);
   const [cuitLoading, setCuitLoading] = useState(false);
 
-  const { data: contactos, reload } = useTable("contactos", {
+  const { data: contactos, reload, loading } = useTable("contactos", {
     orderBy: "nombre",
     ascending: true,
     filter: paisFilter(pais),
@@ -51,7 +55,7 @@ export default function ContactosPage() {
     deps: [pais],
   });
 
-  const filtered = (contactos ?? []).filter((c) => {
+  const filteredRaw = (contactos ?? []).filter((c) => {
     if (filter !== "todos") {
       if (filter === "ambos") {
         if (c.tipo !== "ambos") return false;
@@ -68,11 +72,34 @@ export default function ContactosPage() {
     );
   });
 
+  const { sortBy, sortDir, toggleSort, sorted } = useSortable(filteredRaw, {
+    getValue: (c, key) => {
+      switch (key) {
+        case "nombre": return c.nombre;
+        case "tipo": return c.tipo;
+        case "tax_id": return c.tax_id ?? "";
+        default: return "";
+      }
+    },
+    initial: { key: "nombre", dir: "asc" },
+  });
+  const filtered = sorted ?? filteredRaw;
+
+  const pagination = usePagination(filtered, "contactos", 50);
+  const pageRows = pagination.pageRows;
+
   function openNew() {
     setEditing(null);
     setForm(BLANK);
     setOpen(true);
   }
+
+  // Atajo N
+  useEffect(() => {
+    const handler = () => openNew();
+    window.addEventListener("app:new", handler);
+    return () => window.removeEventListener("app:new", handler);
+  }, []);
 
   function openEdit(c: Contacto) {
     setEditing(c);
@@ -217,7 +244,11 @@ export default function ContactosPage() {
           </div>
         </div>
 
-        {filtered.length === 0 ? (
+        {loading ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="w-6 h-6 animate-spin text-[var(--muted)]" />
+          </div>
+        ) : filtered.length === 0 ? (
           <EmptyState
             icon={<Users className="w-6 h-6" />}
             title={contactos?.length ? "Sin resultados" : "Aún no hay contactos"}
@@ -235,19 +266,18 @@ export default function ContactosPage() {
             }
           />
         ) : (
+          <>
           <table className="table">
             <thead>
               <tr>
-                <th>Nombre</th>
-                <th>Tipo</th>
-                <th>Identificación</th>
-                <th>Contacto</th>
-                <th>País</th>
+                <SortHeader label="Nombre" sortKey="nombre" active={sortBy === "nombre"} dir={sortDir} onToggle={toggleSort} />
+                <SortHeader label="Tipo" sortKey="tipo" active={sortBy === "tipo"} dir={sortDir} onToggle={toggleSort} />
+                <SortHeader label="Identificación" sortKey="tax_id" active={sortBy === "tax_id"} dir={sortDir} onToggle={toggleSort} />
                 <th className="text-right">Acciones</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((c) => (
+              {pageRows.map((c) => (
                 <tr
                   key={c.id}
                   className="cursor-pointer hover:bg-slate-50"
@@ -256,10 +286,6 @@ export default function ContactosPage() {
                   <td className="font-medium text-[var(--primary-hover)]">{c.nombre}</td>
                   <td>{badge(c.tipo)}</td>
                   <td className="text-[var(--muted)]">{c.tax_id || "—"}</td>
-                  <td className="text-[var(--muted)]">
-                    {c.email || c.telefono || "—"}
-                  </td>
-                  <td>{c.pais ? `${COUNTRIES[c.pais].flag} ${c.pais}` : "—"}</td>
                   <td className="text-right" onClick={(e) => e.stopPropagation()}>
                     <button className="btn btn-ghost p-1.5" onClick={() => openEdit(c)} title="Editar">
                       <Pencil className="w-4 h-4" />
@@ -272,11 +298,26 @@ export default function ContactosPage() {
               ))}
             </tbody>
           </table>
+          <Pagination
+            page={pagination.page}
+            totalPages={pagination.totalPages}
+            pageSize={pagination.pageSize}
+            pageSizes={pagination.pageSizes}
+            total={pagination.total}
+            from={pagination.from}
+            to={pagination.to}
+            onPage={pagination.setPage}
+            onPageSize={pagination.setPageSize}
+          />
+          </>
         )}
       </div>
 
       <Modal open={open} onClose={() => setOpen(false)} title={editing ? "Editar contacto" : "Nuevo contacto"}>
         <form onSubmit={save} className="space-y-4">
+          {editing && (
+            <EntityMeta entity="contactos" entityId={editing.id} variant="block" />
+          )}
           <div>
             <label className="label">Tipo *</label>
             <select

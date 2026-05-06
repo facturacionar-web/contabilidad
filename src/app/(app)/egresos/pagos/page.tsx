@@ -2,7 +2,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
-import { useTable, insertRow, updateRow, deleteRow, paisFilter } from "@/lib/useSupabaseData";
+import { useTable, insertRow, updateRow, deleteRow, paisFilter, cascadeAnticiposBeforeDeleteGasto } from "@/lib/useSupabaseData";
 import { createClient } from "@/lib/supabase/client";
 import type { Gasto, GastoEstado, FacturaPago, Retencion, FacturaItem } from "@/lib/types";
 import { useConfig } from "@/lib/useConfig";
@@ -11,7 +11,16 @@ import { formatMoney, formatDate, todayISO, parseMonto } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
 import Modal from "@/components/Modal";
 import EmptyState from "@/components/EmptyState";
-import { Plus, CreditCard, Pencil, Trash2, Search, X, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, CreditCard, Pencil, Trash2, Search, X, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
+import SearchableSelect from "@/components/SearchableSelect";
+import { snapshotPayment, loadConfig, effectiveConfig } from "@/lib/proveedoresConfig";
+import TasaCambioButton from "@/components/TasaCambioButton";
+import { useSortable } from "@/lib/useSortable";
+import SortHeader from "@/components/SortHeader";
+import { usePagination } from "@/lib/usePagination";
+import Pagination from "@/components/Pagination";
+import EntityMeta from "@/components/EntityMeta";
+import MoneyInput from "@/components/MoneyInput";
 
 const TIPOS_RETENCION = ["Ganancias", "IIBB", "Otro"];
 
@@ -46,10 +55,20 @@ type FormState = {
 let _rkey = 0;
 const nextRKey = () => String(++_rkey);
 
+function getLastTasa(moneda: string): number {
+  if (typeof window === "undefined") return 1;
+  const stored = localStorage.getItem(`last_tasa_${moneda}`);
+  return stored ? parseFloat(stored) || 1 : 1;
+}
+function saveLastTasa(moneda: string, tasa: number): void {
+  if (typeof window === "undefined" || tasa <= 0) return;
+  localStorage.setItem(`last_tasa_${moneda}`, String(tasa));
+}
+
 function blank(moneda: CurrencyCode): FormState {
   return {
     fecha: todayISO(), contacto_id: "", cuenta_id: "", metodo_pago: PAYMENT_METHODS[0],
-    moneda, tasa_cambio: 1, nota: "",
+    moneda, tasa_cambio: getLastTasa(moneda), nota: "",
     facturas_pagadas: [],
     lineas_directas: [{ key: nextRKey(), concepto_id: "", monto: 0 }],
   };
@@ -105,6 +124,7 @@ export default function PagosEgresosPage() {
   const autoEditedRef = useRef(false);
   const [preselectedFacturaId, setPreselectedFacturaId] = useState<number | null>(null);
   const preselectedRef = useRef<number | null>(null);
+  const [conciliarId, setConciliarId] = useState<number | null>(null);
   const [showAllFacturas, setShowAllFacturas] = useState(false);
 
   function setPreselected(id: number | null) {
@@ -112,7 +132,7 @@ export default function PagosEgresosPage() {
     setPreselectedFacturaId(id);
   }
 
-  const { data: pagos, reload } = useTable("gastos", {
+  const { data: pagos, reload, loading } = useTable("gastos", {
     orderBy: "fecha",
     filter: [...(paisFilter(pais) ?? []), { column: "tipo", op: "eq", value: "gasto" }],
     skip: !pais, deps: [pais],
@@ -151,10 +171,20 @@ export default function PagosEgresosPage() {
     const preId = preselectedRef.current;
     const preFactura = preId ? facturasPendientes.find(f => f.id === preId) : null;
     const nuevaMoneda = (preFactura?.moneda ?? monedas[0] ?? base) as CurrencyCode;
+
+    // Last payment for this contact → pre-fill cuenta and método
+    const lastPago = form.contacto_id !== ""
+      ? (pagos ?? [])
+          .filter(p => p.contacto_id === Number(form.contacto_id))
+          .sort((a, b) => b.fecha.localeCompare(a.fecha))[0]
+      : null;
+
     setForm(f => ({
       ...f,
       moneda: nuevaMoneda,
-      tasa_cambio: nuevaMoneda === f.moneda ? f.tasa_cambio : 1,
+      tasa_cambio: nuevaMoneda === f.moneda ? f.tasa_cambio : getLastTasa(nuevaMoneda),
+      cuenta_id: lastPago?.cuenta_id ?? f.cuenta_id,
+      metodo_pago: lastPago?.metodo_pago ?? f.metodo_pago,
       facturas_pagadas: facturasPendientes.map(fac => ({
         factura_id: fac.id,
         numero_factura: fac.numero_factura ?? null,
@@ -171,7 +201,7 @@ export default function PagosEgresosPage() {
 
   const hayFiltros = search || fechaDesde || fechaHasta || filtroProveedor !== "" || filtroCuenta;
 
-  const filtered = useMemo(() => (pagos ?? []).filter(g => {
+  const filteredRaw = useMemo(() => (pagos ?? []).filter(g => {
     if (search) {
       const q = search.toLowerCase();
       const fps = g.factura_pagos ?? [];
@@ -186,6 +216,29 @@ export default function PagosEgresosPage() {
     if (filtroCuenta && g.cuenta_id !== filtroCuenta) return false;
     return true;
   }), [pagos, search, fechaDesde, fechaHasta, filtroProveedor, filtroCuenta]);
+
+  const { sortBy, sortDir, toggleSort, sorted } = useSortable(filteredRaw, {
+    getValue: (g, key) => {
+      switch (key) {
+        case "id": return Number(g.id);
+        case "fecha": return g.fecha;
+        case "detalle": {
+          const fps = g.factura_pagos ?? [];
+          return fps.length > 0 ? fps.map(fp => fp.numero_factura ?? "").join(" ") : g.concepto;
+        }
+        case "proveedor": return contactos?.find(c => c.id === g.contacto_id)?.nombre ?? "";
+        case "cuenta": return cuentas?.find(c => c.id === g.cuenta_id)?.nombre ?? "";
+        case "metodo": return g.metodo_pago ?? "";
+        case "monto": return Number(g.total);
+        default: return "";
+      }
+    },
+    initial: { key: "fecha", dir: "desc" },
+  });
+  const filtered = sorted ?? filteredRaw;
+
+  const pagination = usePagination(filtered, "pagos", 50);
+  const pageRows = pagination.pageRows;
 
   function limpiarFiltros() {
     setSearch("");
@@ -215,14 +268,37 @@ export default function PagosEgresosPage() {
     setOpen(true);
   }
 
+  // Atajo N
+  useEffect(() => {
+    const handler = () => openNew();
+    window.addEventListener("app:new", handler);
+    return () => window.removeEventListener("app:new", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monedas, base]);
+
   useEffect(() => {
     if (autoOpenedRef.current || !pais || searchParams.get("nuevo") !== "1") return;
     const p = searchParams.get("proveedor");
     const fId = searchParams.get("factura");
+    const fecha = searchParams.get("fecha");
+    const cuenta = searchParams.get("cuenta");
+    const monto = searchParams.get("monto");
+    const conciliar = searchParams.get("conciliar");
     autoOpenedRef.current = true;
     openNew(p ? Number(p) : undefined, fId ? Number(fId) : undefined);
+    // Aplicar defaults pasados desde Conciliación
+    if (fecha || cuenta || monto) {
+      setForm(f => ({
+        ...f,
+        ...(fecha ? { fecha } : {}),
+        ...(cuenta ? { cuenta_id: cuenta } : {}),
+        ...(monto ? { lineas_directas: [{ key: nextRKey(), concepto_id: "", monto: Number(monto) }] } : {}),
+      }));
+    }
+    if (conciliar) setConciliarId(Number(conciliar));
     const params = new URLSearchParams(searchParams.toString());
     params.delete("nuevo"); params.delete("proveedor"); params.delete("factura");
+    params.delete("fecha"); params.delete("cuenta"); params.delete("monto"); params.delete("conciliar");
     const qs = params.toString();
     router.replace(qs ? `/egresos/pagos?${qs}` : "/egresos/pagos");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -303,6 +379,31 @@ export default function PagosEgresosPage() {
   async function handleSave() {
     if (!form.cuenta_id) { alert("La cuenta bancaria es obligatoria."); return; }
     if (totals.neto <= 0) { alert("El monto total del pago debe ser mayor a cero."); return; }
+
+    // Validar que el monto asignado a cada factura no supere lo que falta pagar.
+    // Las retenciones NO se suman: son parte del monto (van al gobierno en lugar de al banco).
+    for (const fp of form.facturas_pagadas) {
+      if (fp.monto <= 0) continue;
+      const porPagar = Math.round((fp.total_factura - fp.monto_pagado_antes) * 100) / 100;
+      if (fp.monto > porPagar + 0.01) {
+        alert(
+          `La factura ${fp.numero_factura ?? `#${fp.factura_id}`} tiene ${formatMoney(porPagar, fp.moneda, country.locale)} por pagar.\n\n` +
+          `Estás asignando ${formatMoney(fp.monto, fp.moneda, country.locale)}.\n\n` +
+          `Reducí el monto antes de continuar.`
+        );
+        return;
+      }
+      // Validar que las retenciones no superen el monto a pagar (sino el "neto" sería negativo)
+      const totalRet = fp.retenciones.reduce((s, r) => s + Number(r.monto || 0), 0);
+      if (totalRet > fp.monto + 0.01) {
+        alert(
+          `Las retenciones de la factura ${fp.numero_factura ?? `#${fp.factura_id}`} (${formatMoney(totalRet, fp.moneda, country.locale)}) ` +
+          `no pueden ser mayores al monto a pagar (${formatMoney(fp.monto, fp.moneda, country.locale)}).`
+        );
+        return;
+      }
+    }
+
     setSaving(true);
     try {
       const { neto } = totals;
@@ -360,10 +461,49 @@ export default function PagosEgresosPage() {
         factura_pagos: facturaPagosPayload.length > 0 ? facturaPagosPayload : null,
       };
 
+      let pagoId: number;
+      const proveedorNombre = contactos?.find(c => c.id === payload.contacto_id)?.nombre ?? "";
+
       if (editing) {
         await updateRow("gastos", editing.id, payload);
+        pagoId = editing.id;
+        // Sync edición pago sin factura
+        const tieneLineasDirectas = (payload.items ?? []).length > 0;
+        if (tieneLineasDirectas) {
+          const distConfigs: Record<string, unknown> = {};
+          if (payload.contacto_id) {
+            for (const l of lineasActivas) {
+              const nombre = conceptos.find(c => c.id === l.concepto_id)?.nombre;
+              if (nombre) distConfigs[nombre] = effectiveConfig(pagoId, payload.contacto_id, nombre);
+            }
+          }
+          fetch("/api/sync-factura", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...payload, id: pagoId, proveedor: proveedorNombre, tipo_sync: "pago", dist_configs: distConfigs }),
+          }).then(r => r.json()).then(d => { if (!d.ok) console.error("[sync-pago] PATCH error:", d.error); })
+            .catch(e => console.error("[sync-pago] PATCH network error:", e));
+        }
       } else {
-        await insertRow("gastos", payload);
+        const inserted = await insertRow("gastos", payload);
+        pagoId = inserted.id;
+        // Sync nuevo pago sin factura
+        const tieneLineasDirectas = (payload.items ?? []).length > 0;
+        if (tieneLineasDirectas) {
+          const distConfigs: Record<string, unknown> = {};
+          if (payload.contacto_id) {
+            for (const l of lineasActivas) {
+              const nombre = conceptos.find(c => c.id === l.concepto_id)?.nombre;
+              if (nombre) distConfigs[nombre] = loadConfig(payload.contacto_id, nombre);
+            }
+          }
+          fetch("/api/sync-factura", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...payload, id: pagoId, proveedor: proveedorNombre, tipo_sync: "pago", dist_configs: distConfigs }),
+          }).then(r => r.json()).then(d => { if (!d.ok) console.error("[sync-pago] POST error:", d.error); else console.log("[sync-pago] OK"); })
+            .catch(e => console.error("[sync-pago] POST network error:", e));
+        }
       }
 
       // Update each linked factura
@@ -377,6 +517,36 @@ export default function PagosEgresosPage() {
           monto_pagado: Math.min(nuevo_pagado, total_factura),
           estado: nuevo_estado,
         });
+      }
+
+      saveLastTasa(form.moneda, form.tasa_cambio);
+
+      // Snapshot distribution config at payment time (immutable historical record)
+      if (payload.contacto_id) {
+        const conceptNames = lineasActivas
+          .map(l => conceptos.find(c => c.id === l.concepto_id)?.nombre)
+          .filter(Boolean) as string[];
+        if (conceptNames.length > 0) {
+          snapshotPayment(pagoId, payload.contacto_id, conceptNames);
+        }
+      }
+
+      // Si vino desde Conciliación, vinculá el pago al movimiento del banco
+      if (conciliarId) {
+        try {
+          const sb = createClient();
+          await sb.from("conciliacion_movimientos").update({
+            matched_type: "pago",
+            matched_id: pagoId,
+            matched_by: "created",
+            matched_score: 100,
+            estado: "conciliado",
+            reconciled_at: new Date().toISOString(),
+          } as never).eq("id", conciliarId);
+        } catch (e) {
+          console.warn("[conciliacion] no se pudo vincular:", e);
+        }
+        setConciliarId(null);
       }
 
       await reload();
@@ -402,8 +572,15 @@ export default function PagosEgresosPage() {
           nuevo_pagado <= 0 ? "pendiente" : nuevo_pagado >= total_factura ? "pagado" : "parcial";
         await updateRow("gastos", fp.factura_id, { monto_pagado: nuevo_pagado, estado: nuevo_estado });
       }
+      await cascadeAnticiposBeforeDeleteGasto(g.id);
       await deleteRow("gastos", g.id);
       await reload();
+      // Sync eliminación (si tenía líneas directas)
+      fetch("/api/sync-factura", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: g.id, tipo_sync: "pago" }),
+      }).catch(e => console.error("[sync-pago] DELETE network error:", e));
     } catch (err) { alert("Error: " + (err as Error).message); }
   }
 
@@ -446,7 +623,11 @@ export default function PagosEgresosPage() {
           )}
         </div>
 
-        {filtered.length === 0 ? (
+        {loading ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="w-6 h-6 animate-spin text-[var(--muted)]" />
+          </div>
+        ) : filtered.length === 0 ? (
           <EmptyState
             icon={<CreditCard className="w-6 h-6" />}
             title={pagos?.length ? "Sin resultados" : "Aún no hay pagos"}
@@ -454,17 +635,22 @@ export default function PagosEgresosPage() {
             action={!pagos?.length && <button className="btn btn-primary" onClick={() => openNew()}><Plus className="w-4 h-4" /> Nuevo pago</button>}
           />
         ) : (
+          <>
           <table className="table text-sm">
             <thead>
               <tr>
-                <th className="text-center w-10">#</th>
-                <th>Fecha</th><th>Detalle</th><th>Proveedor</th>
-                <th>Cuenta</th><th>Método</th>
-                <th className="text-right">Monto</th><th className="text-right">Acciones</th>
+                <SortHeader label="#" sortKey="id" align="center" className="text-center w-10" active={sortBy === "id"} dir={sortDir} onToggle={toggleSort} />
+                <SortHeader label="Fecha" sortKey="fecha" active={sortBy === "fecha"} dir={sortDir} onToggle={toggleSort} />
+                <SortHeader label="Detalle" sortKey="detalle" active={sortBy === "detalle"} dir={sortDir} onToggle={toggleSort} />
+                <SortHeader label="Proveedor" sortKey="proveedor" active={sortBy === "proveedor"} dir={sortDir} onToggle={toggleSort} />
+                <SortHeader label="Cuenta" sortKey="cuenta" active={sortBy === "cuenta"} dir={sortDir} onToggle={toggleSort} />
+                <SortHeader label="Método" sortKey="metodo" active={sortBy === "metodo"} dir={sortDir} onToggle={toggleSort} />
+                <SortHeader label="Monto" sortKey="monto" align="right" className="text-right" active={sortBy === "monto"} dir={sortDir} onToggle={toggleSort} />
+                <th className="text-right">Acciones</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map(g => {
+              {pageRows.map(g => {
                 const fps = g.factura_pagos ?? [];
                 return (
                   <tr key={g.id}>
@@ -499,26 +685,43 @@ export default function PagosEgresosPage() {
               })}
             </tbody>
           </table>
+          <Pagination
+            page={pagination.page}
+            totalPages={pagination.totalPages}
+            pageSize={pagination.pageSize}
+            pageSizes={pagination.pageSizes}
+            total={pagination.total}
+            from={pagination.from}
+            to={pagination.to}
+            onPage={pagination.setPage}
+            onPageSize={pagination.setPageSize}
+          />
+          </>
         )}
       </div>
 
       {/* ── Modal ── */}
       <Modal open={open} onClose={() => setOpen(false)} title={editing ? "Editar pago" : "Nuevo pago"} size="xl">
         <div className="space-y-5">
+          {editing && (
+            <EntityMeta entity="gastos" entityId={editing.id} variant="block" />
+          )}
 
           {/* General info */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="label">Contacto / Proveedor</label>
-              <select className="select" value={form.contacto_id}
-                onChange={e => {
+              <SearchableSelect
+                value={form.contacto_id}
+                onChange={v => {
                   setPreselected(null);
                   setShowAllFacturas(false);
-                  setForm(f => ({ ...f, contacto_id: e.target.value === "" ? "" : Number(e.target.value), facturas_pagadas: [] }));
-                }}>
-                <option value="">— Sin contacto —</option>
-                {proveedores.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-              </select>
+                  setForm(f => ({ ...f, contacto_id: v === "" ? "" : Number(v), facturas_pagadas: [] }));
+                }}
+                options={proveedores.map(c => ({ value: c.id, label: c.nombre }))}
+                placeholder="— Sin contacto —"
+                emptyLabel="— Sin contacto —"
+              />
             </div>
             <div>
               <label className="label">Cuenta bancaria *</label>
@@ -543,18 +746,23 @@ export default function PagosEgresosPage() {
             <div>
               <label className="label">Moneda *</label>
               <select className="select" value={form.moneda}
-                onChange={e => setForm(f => ({ ...f, moneda: e.target.value as CurrencyCode, tasa_cambio: 1 }))}>
+                onChange={e => setForm(f => ({ ...f, moneda: e.target.value as CurrencyCode, tasa_cambio: getLastTasa(e.target.value) }))}>
                 {monedas.map(code => <option key={code} value={code}>{code} — {CURRENCIES[code].name}</option>)}
               </select>
             </div>
             {isForeign && (
               <div>
                 <label className="label">Tasa de cambio</label>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-sm text-[var(--muted)]">1 {form.moneda} =</span>
                   <input type="text" inputMode="decimal" className="input flex-1"
                     value={form.tasa_cambio || ""} onChange={e => setForm(f => ({ ...f, tasa_cambio: parseMonto(e.target.value) }))} />
                   <span className="text-sm text-[var(--muted)]">{base}</span>
+                  <TasaCambioButton
+                    moneda={form.moneda}
+                    fecha={form.fecha}
+                    onChange={(v) => setForm(f => ({ ...f, tasa_cambio: v }))}
+                  />
                 </div>
               </div>
             )}
@@ -614,10 +822,24 @@ export default function PagosEgresosPage() {
                           </div>
                           <div>
                             <label className="text-xs text-[var(--muted)]">Monto a pagar *</label>
-                            <input type="text" inputMode="decimal" className="input text-sm py-1"
-                              placeholder="0.00" value={fp.monto || ""}
-                              onClick={() => { if (!fp.monto) setFP(fp.factura_id, { monto: porPagar }); }}
-                              onChange={e => setFP(fp.factura_id, { monto: parseMonto(e.target.value) })} />
+                            <div onClick={() => { if (!fp.monto) setFP(fp.factura_id, { monto: porPagar }); }}>
+                              <MoneyInput
+                                className={`input text-sm py-1 ${fp.monto > porPagar + 0.01 ? "border-red-500 bg-red-50" : ""}`}
+                                placeholder="0,00"
+                                value={fp.monto}
+                                onChange={(n) => setFP(fp.factura_id, { monto: n })}
+                              />
+                            </div>
+                            {fp.monto > porPagar + 0.01 && (
+                              <p className="text-[11px] text-red-600 mt-1">
+                                Excede {formatMoney(porPagar, fp.moneda, country.locale)} por pagar
+                              </p>
+                            )}
+                            {totalRet > fp.monto + 0.01 && fp.monto > 0 && (
+                              <p className="text-[11px] text-amber-600 mt-1">
+                                Retenciones mayores al monto
+                              </p>
+                            )}
                           </div>
                         </div>
 
@@ -629,9 +851,12 @@ export default function PagosEgresosPage() {
                                 value={r.tipo} onChange={e => updateRetencion(fp.factura_id, r.key, { tipo: e.target.value })}>
                                 {TIPOS_RETENCION.map(t => <option key={t} value={t}>{t}</option>)}
                               </select>
-                              <input type="text" inputMode="decimal" className="input text-xs py-1 w-36"
-                                placeholder="Monto" value={r.monto || ""}
-                                onChange={e => updateRetencion(fp.factura_id, r.key, { monto: parseMonto(e.target.value) })} />
+                              <MoneyInput
+                                className="input text-xs py-1 w-36"
+                                placeholder="Monto"
+                                value={r.monto}
+                                onChange={(n) => updateRetencion(fp.factura_id, r.key, { monto: n })}
+                              />
                               <button type="button" className="text-[var(--muted)] hover:text-red-500"
                                 onClick={() => removeRetencion(fp.factura_id, r.key)}>
                                 <X className="w-3.5 h-3.5" />
@@ -668,20 +893,20 @@ export default function PagosEgresosPage() {
             <div className="divide-y divide-[var(--border)]">
               {form.lineas_directas.map(l => (
                 <div key={l.key} className="flex items-center gap-3 px-4 py-2.5">
-                  <select
-                    className="select w-64 text-sm py-1"
+                  <SearchableSelect
+                    size="sm"
+                    className="w-64"
                     value={l.concepto_id}
-                    onChange={e => updateLinea(l.key, { concepto_id: e.target.value })}
-                  >
-                    <option value="">— Concepto —</option>
-                    {conceptos.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                  </select>
-                  <input
-                    type="text" inputMode="decimal"
+                    onChange={v => updateLinea(l.key, { concepto_id: v })}
+                    options={conceptos.map(c => ({ value: c.id, label: c.nombre }))}
+                    placeholder="— Concepto —"
+                    emptyLabel="— Sin concepto —"
+                  />
+                  <MoneyInput
                     className="input w-36 text-sm py-1"
-                    placeholder="0.00"
-                    value={l.monto || ""}
-                    onChange={e => updateLinea(l.key, { monto: parseMonto(e.target.value) })}
+                    placeholder="0,00"
+                    value={l.monto}
+                    onChange={(n) => updateLinea(l.key, { monto: n })}
                   />
                   <button
                     type="button"
@@ -706,7 +931,7 @@ export default function PagosEgresosPage() {
             <div className="flex justify-end">
               <div className="space-y-1 text-sm w-80">
                 {isForeign && (
-                  <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
+                  <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2 flex-wrap gap-1">
                     <span className="text-amber-800 text-sm">1 {form.moneda} =</span>
                     <input
                       type="text" inputMode="decimal"
@@ -716,6 +941,11 @@ export default function PagosEgresosPage() {
                       onChange={e => setForm(f => ({ ...f, tasa_cambio: parseMonto(e.target.value) }))}
                     />
                     <span className="text-amber-800 text-sm">{base}</span>
+                    <TasaCambioButton
+                      moneda={form.moneda}
+                      fecha={form.fecha}
+                      onChange={(v) => setForm(f => ({ ...f, tasa_cambio: v }))}
+                    />
                   </div>
                 )}
                 {totals.aplicadoFacturas > 0 && (

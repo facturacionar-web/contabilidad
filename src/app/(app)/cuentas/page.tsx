@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useTable, insertRow, updateRow, deleteRow, paisFilter } from "@/lib/useSupabaseData";
 import type { Cuenta, CuentaTipo } from "@/lib/types";
 import { useConfig } from "@/lib/useConfig";
@@ -8,7 +8,8 @@ import { formatMoney } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
 import Modal from "@/components/Modal";
 import EmptyState from "@/components/EmptyState";
-import { Plus, Building2, Pencil, Trash2, Search } from "lucide-react";
+import { Plus, Building2, Pencil, Trash2, Search, Loader2 } from "lucide-react";
+import EntityMeta from "@/components/EntityMeta";
 
 type FormState = {
   nombre: string;
@@ -46,7 +47,7 @@ export default function CuentasPage() {
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const { data: cuentas, reload } = useTable("cuentas", {
+  const { data: cuentas, reload, loading } = useTable("cuentas", {
     orderBy: "nombre",
     ascending: true,
     filter: paisFilter(pais),
@@ -84,6 +85,14 @@ export default function CuentasPage() {
     setForm({ nombre: "", tipo: "banco", moneda: monedas[0], descripcion: "" });
     setOpen(true);
   }
+
+  // Atajo N
+  useEffect(() => {
+    const handler = () => openNew();
+    window.addEventListener("app:new", handler);
+    return () => window.removeEventListener("app:new", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monedas]);
 
   function openEdit(c: Cuenta) {
     setEditing(c);
@@ -189,7 +198,11 @@ export default function CuentasPage() {
           </div>
         </div>
 
-        {filtered.length === 0 ? (
+        {loading ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="w-6 h-6 animate-spin text-[var(--muted)]" />
+          </div>
+        ) : filtered.length === 0 ? (
           <EmptyState
             icon={<Building2 className="w-6 h-6" />}
             title={cuentas?.length ? "Sin resultados" : "Aún no hay cuentas"}
@@ -244,6 +257,9 @@ export default function CuentasPage() {
         title={editing ? "Editar cuenta" : "Nueva cuenta"}
       >
         <form onSubmit={save} className="space-y-4">
+          {editing && (
+            <EntityMeta entity="cuentas" entityId={editing.id} variant="block" />
+          )}
           <div>
             <label className="label">Nombre *</label>
             <input

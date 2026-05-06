@@ -1,6 +1,8 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { useTable, insertRow, updateRow, deleteRow, paisFilter } from "@/lib/useSupabaseData";
+import { createClient } from "@/lib/supabase/client";
 import type { Ingreso } from "@/lib/types";
 import { useConfig } from "@/lib/useConfig";
 import { CURRENCIES, CurrencyCode, PAYMENT_METHODS, monedasDisponibles } from "@/lib/countries";
@@ -8,8 +10,11 @@ import { formatMoney, formatDate, todayISO } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
 import Modal from "@/components/Modal";
 import EmptyState from "@/components/EmptyState";
-import { Plus, TrendingUp, Pencil, Trash2, Search } from "lucide-react";
+import { Plus, TrendingUp, Pencil, Trash2, Search, Loader2 } from "lucide-react";
 import Link from "next/link";
+import SearchableSelect from "@/components/SearchableSelect";
+import EntityMeta from "@/components/EntityMeta";
+import TasaCambioButton from "@/components/TasaCambioButton";
 
 type FormState = {
   fecha: string;
@@ -19,10 +24,21 @@ type FormState = {
   cuenta_id: string;
   monto: number;
   moneda: CurrencyCode;
+  tasa_cambio: number;
   metodo_pago: string;
   referencia: string;
   notas: string;
 };
+
+function getLastTasa(moneda: string): number {
+  if (typeof window === "undefined") return 1;
+  const stored = localStorage.getItem(`last_tasa_${moneda}`);
+  return stored ? parseFloat(stored) || 1 : 1;
+}
+function saveLastTasa(moneda: string, tasa: number): void {
+  if (typeof window === "undefined" || tasa <= 0) return;
+  localStorage.setItem(`last_tasa_${moneda}`, String(tasa));
+}
 
 function blank(moneda: CurrencyCode): FormState {
   return {
@@ -33,6 +49,7 @@ function blank(moneda: CurrencyCode): FormState {
     cuenta_id: "",
     monto: 0,
     moneda,
+    tasa_cambio: getLastTasa(moneda),
     metodo_pago: PAYMENT_METHODS[0],
     referencia: "",
     notas: "",
@@ -49,8 +66,12 @@ export default function PagosRecibidosPage() {
   const [form, setForm] = useState<FormState>(blank("MXN"));
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
+  const [conciliarId, setConciliarId] = useState<number | null>(null);
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const autoOpenedRef = useRef(false);
 
-  const { data: ingresos, reload } = useTable("ingresos", {
+  const { data: ingresos, reload, loading } = useTable("ingresos", {
     orderBy: "fecha",
     filter: paisFilter(pais),
     skip: !pais,
@@ -90,6 +111,40 @@ export default function PagosRecibidosPage() {
     setOpen(true);
   }
 
+  // Atajo N
+  useEffect(() => {
+    const handler = () => openNew();
+    window.addEventListener("app:new", handler);
+    return () => window.removeEventListener("app:new", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monedas]);
+
+  // Auto-abrir modal con datos de Conciliación o ?nuevo=1
+  useEffect(() => {
+    if (autoOpenedRef.current || !pais || searchParams.get("nuevo") !== "1") return;
+    const fecha = searchParams.get("fecha");
+    const cuenta = searchParams.get("cuenta");
+    const monto = searchParams.get("monto");
+    const conciliar = searchParams.get("conciliar");
+    autoOpenedRef.current = true;
+    openNew();
+    if (fecha || cuenta || monto) {
+      setForm(f => ({
+        ...f,
+        ...(fecha ? { fecha } : {}),
+        ...(cuenta ? { cuenta_id: cuenta } : {}),
+        ...(monto ? { monto: Number(monto) } : {}),
+      }));
+    }
+    if (conciliar) setConciliarId(Number(conciliar));
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("nuevo"); params.delete("fecha"); params.delete("cuenta");
+    params.delete("monto"); params.delete("conciliar");
+    const qs = params.toString();
+    router.replace(qs ? `/ingresos/pagos-recibidos?${qs}` : "/ingresos/pagos-recibidos");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pais, searchParams]);
+
   function openEdit(i: Ingreso) {
     setEditing(i);
     setForm({
@@ -100,6 +155,7 @@ export default function PagosRecibidosPage() {
       cuenta_id: i.cuenta_id ?? "",
       monto: Number(i.monto),
       moneda: i.moneda,
+      tasa_cambio: Number(i.tasa_cambio ?? 1),
       metodo_pago: i.metodo_pago ?? PAYMENT_METHODS[0],
       referencia: i.referencia ?? "",
       notas: i.notas ?? "",
@@ -125,14 +181,36 @@ export default function PagosRecibidosPage() {
         cuenta_id: form.cuenta_id || null,
         monto: form.monto,
         moneda: form.moneda,
+        tasa_cambio: form.tasa_cambio || 1,
         metodo_pago: form.metodo_pago,
         referencia: form.referencia || null,
         notas: form.notas || null,
       };
+      saveLastTasa(form.moneda, form.tasa_cambio);
+      let ingresoId: number;
       if (editing) {
         await updateRow("ingresos", editing.id, payload);
+        ingresoId = editing.id;
       } else {
-        await insertRow("ingresos", payload);
+        const inserted = await insertRow("ingresos", payload);
+        ingresoId = inserted.id;
+      }
+      // Si vino desde Conciliación, vincular este ingreso al movimiento del banco
+      if (conciliarId && !editing) {
+        try {
+          const sb = createClient();
+          await sb.from("conciliacion_movimientos").update({
+            matched_type: "ingreso",
+            matched_id: ingresoId,
+            matched_by: "created",
+            matched_score: 100,
+            estado: "conciliado",
+            reconciled_at: new Date().toISOString(),
+          } as never).eq("id", conciliarId);
+        } catch (e) {
+          console.warn("[conciliacion] no se pudo vincular:", e);
+        }
+        setConciliarId(null);
       }
       await reload();
       setOpen(false);
@@ -191,7 +269,11 @@ export default function PagosRecibidosPage() {
           </div>
         </div>
 
-        {filtered.length === 0 ? (
+        {loading ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="w-6 h-6 animate-spin text-[var(--muted)]" />
+          </div>
+        ) : filtered.length === 0 ? (
           <EmptyState
             icon={<TrendingUp className="w-6 h-6" />}
             title={ingresos?.length ? "Sin resultados" : "Aún no hay pagos recibidos"}
@@ -263,6 +345,9 @@ export default function PagosRecibidosPage() {
 
       <Modal open={open} onClose={() => setOpen(false)} title={editing ? "Editar ingreso" : "Nuevo pago recibido"} size="lg">
         <form onSubmit={save} className="space-y-4">
+          {editing && (
+            <EntityMeta entity="ingresos" entityId={editing.id} variant="block" />
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="label">Fecha *</label>
@@ -283,27 +368,26 @@ export default function PagosRecibidosPage() {
             </div>
             <div>
               <label className="label">Concepto</label>
-              <select className="select" value={form.concepto_id} onChange={(e) => setForm({ ...form, concepto_id: e.target.value })}>
-                <option value="">— Sin concepto —</option>
-                {conceptos.length === 0 && <option disabled>No hay conceptos. Creá uno en Conceptos.</option>}
-                {conceptos.map((c) => (
-                  <option key={c.id} value={c.id}>{c.nombre}</option>
-                ))}
-              </select>
+              <SearchableSelect
+                value={form.concepto_id}
+                onChange={v => setForm({ ...form, concepto_id: v })}
+                options={conceptos.map(c => ({ value: c.id, label: c.nombre }))}
+                placeholder="— Sin concepto —"
+                emptyLabel="— Sin concepto —"
+              />
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="label">Cliente</label>
-              <select className="select" value={form.contacto_id} onChange={(e) => setForm({ ...form, contacto_id: e.target.value === "" ? "" : Number(e.target.value) })}>
-                <option value="">— Sin cliente —</option>
-                {(contactos ?? [])
-                  .filter((c) => c.tipo === "cliente" || c.tipo === "ambos")
-                  .map((c) => (
-                    <option key={c.id} value={c.id}>{c.nombre}</option>
-                  ))}
-              </select>
+              <SearchableSelect
+                value={form.contacto_id}
+                onChange={v => setForm({ ...form, contacto_id: v === "" ? "" : Number(v) })}
+                options={(contactos ?? []).filter(c => c.tipo === "cliente" || c.tipo === "ambos").map(c => ({ value: c.id, label: c.nombre }))}
+                placeholder="— Sin cliente —"
+                emptyLabel="— Sin cliente —"
+              />
             </div>
             <div>
               <label className="label">Cuenta</label>
@@ -328,13 +412,35 @@ export default function PagosRecibidosPage() {
             </div>
             <div>
               <label className="label">Moneda *</label>
-              <select className="select" value={form.moneda} onChange={(e) => setForm({ ...form, moneda: e.target.value as CurrencyCode })}>
+              <select className="select" value={form.moneda} onChange={(e) => {
+                const moneda = e.target.value as CurrencyCode;
+                setForm({ ...form, moneda, tasa_cambio: getLastTasa(moneda) });
+              }}>
                 {monedas.map((code) => (
                   <option key={code} value={code}>{code} — {CURRENCIES[code].name}</option>
                 ))}
               </select>
             </div>
           </div>
+
+          {form.moneda !== (config?.moneda_base ?? "ARS") && (
+            <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 flex-wrap">
+              <span className="text-sm text-amber-800 whitespace-nowrap">1 {form.moneda} =</span>
+              <input
+                type="number" step="0.01" min="0"
+                className="input w-32 text-sm py-1"
+                placeholder="Tasa"
+                value={form.tasa_cambio || ""}
+                onChange={e => setForm({ ...form, tasa_cambio: parseFloat(e.target.value) || 0 })}
+              />
+              <span className="text-sm text-amber-800 whitespace-nowrap">{config?.moneda_base ?? "ARS"}</span>
+              <TasaCambioButton
+                moneda={form.moneda}
+                fecha={form.fecha}
+                onChange={(v) => setForm(f => ({ ...f, tasa_cambio: v }))}
+              />
+            </div>
+          )}
 
           <div>
             <label className="label">Referencia</label>

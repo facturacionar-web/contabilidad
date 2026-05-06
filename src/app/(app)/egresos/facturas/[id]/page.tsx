@@ -8,6 +8,7 @@ import { useConfig } from "@/lib/useConfig";
 import { CurrencyCode } from "@/lib/countries";
 import { formatMoney, formatDate } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
+import EntityMeta from "@/components/EntityMeta";
 import { ArrowLeft, CreditCard, Receipt } from "lucide-react";
 
 export default function FacturaDetailPage({
@@ -178,6 +179,8 @@ export default function FacturaDetailPage({
         }
       />
 
+      <EntityMeta entity="gastos" entityId={factura.id} variant="block" className="mb-4 -mt-4" />
+
       {/* Cabecera: proveedor + estado */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         <div className="card py-3">
@@ -293,38 +296,38 @@ export default function FacturaDetailPage({
             <tfoot className="border-t-2 border-[var(--border)]">
               {subtotalCalc > 0 && ivaCalc > 0 && (
                 <>
-                  <tr className="bg-slate-50/60">
+                  <tr className="bg-[var(--surface-2)]">
                     <td colSpan={5} className="px-5 py-2 text-right text-sm text-[var(--muted)]">
                       Subtotal
                     </td>
-                    <td className="px-5 py-2 text-right font-medium">
+                    <td className="px-5 py-2 text-right font-medium text-[var(--foreground)]">
                       {formatMoney(subtotalCalc, factura.moneda, country.locale)}
                     </td>
                   </tr>
-                  <tr className="bg-slate-50/60">
+                  <tr className="bg-[var(--surface-2)]">
                     <td colSpan={5} className="px-5 py-2 text-right text-sm text-[var(--muted)]">
                       IVA
                     </td>
-                    <td className="px-5 py-2 text-right font-medium">
+                    <td className="px-5 py-2 text-right font-medium text-[var(--foreground)]">
                       {formatMoney(ivaCalc, factura.moneda, country.locale)}
                     </td>
                   </tr>
                 </>
               )}
-              <tr className="bg-slate-100/60">
-                <td colSpan={5} className="px-5 py-2.5 text-right font-semibold">
+              <tr className="bg-[var(--surface-hover)]">
+                <td colSpan={5} className="px-5 py-2.5 text-right font-semibold text-[var(--foreground)]">
                   Total {factura.moneda}
                 </td>
-                <td className="px-5 py-2.5 text-right font-bold text-base text-red-700">
+                <td className="px-5 py-2.5 text-right font-bold text-base text-red-500">
                   {formatMoney(totalCalc, factura.moneda, country.locale)}
                 </td>
               </tr>
               {isForeign && tasa > 1 && (
                 <tr className="bg-amber-50">
-                  <td colSpan={5} className="px-5 py-2 text-right text-sm text-amber-800">
+                  <td colSpan={5} className="px-5 py-2 text-right text-sm text-amber-700">
                     Total {base} (1 {factura.moneda} = {tasa} {base})
                   </td>
-                  <td className="px-5 py-2 text-right font-bold text-amber-800">
+                  <td className="px-5 py-2 text-right font-bold text-amber-700">
                     {formatMoney(totalCalc * tasa, base, country.locale)}
                   </td>
                 </tr>

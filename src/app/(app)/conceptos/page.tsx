@@ -1,45 +1,33 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useTable, insertRow, updateRow, deleteRow, paisFilter } from "@/lib/useSupabaseData";
 import { createClient } from "@/lib/supabase/client";
-import type { Concepto, ConceptoTipo } from "@/lib/types";
+import type { Concepto } from "@/lib/types";
 import { useConfig } from "@/lib/useConfig";
-import { formatDate } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
 import Modal from "@/components/Modal";
 import EmptyState from "@/components/EmptyState";
-import { Plus, Layers, Pencil, Trash2, Search } from "lucide-react";
+import { Plus, Layers, Pencil, Trash2, Search, Loader2, ArrowUpRight } from "lucide-react";
+import EntityMeta from "@/components/EntityMeta";
 
 type FormState = {
   nombre: string;
-  tipo: ConceptoTipo;
   descripcion: string;
+  es_anticipo: boolean;
 };
 
-const BLANK: FormState = { nombre: "", tipo: "ambos", descripcion: "" };
-
-const TIPO_LABELS: Record<ConceptoTipo, string> = {
-  ingreso: "Ingreso",
-  egreso: "Egreso",
-  ambos: "Ambos",
-};
-const TIPO_BADGE: Record<ConceptoTipo, string> = {
-  ingreso: "badge-success",
-  egreso: "badge-danger",
-  ambos: "badge-info",
-};
+const BLANK: FormState = { nombre: "", descripcion: "", es_anticipo: false };
 
 export default function ConceptosPage() {
-  const { config, country } = useConfig();
+  const { config } = useConfig();
   const pais = config?.pais;
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Concepto | null>(null);
   const [form, setForm] = useState<FormState>(BLANK);
   const [search, setSearch] = useState("");
-  const [filterTipo, setFilterTipo] = useState<"todos" | ConceptoTipo>("todos");
   const [saving, setSaving] = useState(false);
 
-  const { data: conceptos, reload } = useTable("conceptos", {
+  const { data: conceptos, reload, loading } = useTable("conceptos", {
     orderBy: "nombre",
     ascending: true,
     filter: paisFilter(pais),
@@ -47,11 +35,9 @@ export default function ConceptosPage() {
     deps: [pais],
   });
 
-  const filtered = (conceptos ?? []).filter((c) => {
-    if (filterTipo !== "todos" && c.tipo !== filterTipo) return false;
-    if (!search) return true;
-    return c.nombre.toLowerCase().includes(search.toLowerCase());
-  });
+  const filtered = (conceptos ?? []).filter((c) =>
+    !search || c.nombre.toLowerCase().includes(search.toLowerCase())
+  );
 
   function openNew() {
     setEditing(null);
@@ -59,9 +45,20 @@ export default function ConceptosPage() {
     setOpen(true);
   }
 
+  // Atajo de teclado N: abrir modal de nuevo
+  useEffect(() => {
+    const handler = () => openNew();
+    window.addEventListener("app:new", handler);
+    return () => window.removeEventListener("app:new", handler);
+  }, []);
+
   function openEdit(c: Concepto) {
     setEditing(c);
-    setForm({ nombre: c.nombre, tipo: c.tipo, descripcion: c.descripcion ?? "" });
+    setForm({
+      nombre: c.nombre,
+      descripcion: c.descripcion ?? "",
+      es_anticipo: !!c.es_anticipo,
+    });
     setOpen(true);
   }
 
@@ -73,8 +70,9 @@ export default function ConceptosPage() {
       const payload = {
         ctx_pais: pais,
         nombre: form.nombre.trim(),
-        tipo: form.tipo,
+        tipo: "ambos" as const,
         descripcion: form.descripcion || null,
+        es_anticipo: form.es_anticipo,
       };
       if (editing) {
         await updateRow("conceptos", editing.id, payload);
@@ -91,7 +89,6 @@ export default function ConceptosPage() {
   }
 
   async function remove(c: Concepto) {
-    // Verificar que no esté en uso antes de borrar
     try {
       const supabase = createClient();
       const [{ count: ci }, { count: cg }] = await Promise.all([
@@ -120,7 +117,7 @@ export default function ConceptosPage() {
     <>
       <PageHeader
         title="Conceptos"
-        description="Categorías personalizadas para clasificar ingresos y egresos"
+        description="Categorías para clasificar ingresos y egresos"
         action={
           <button className="btn btn-primary" onClick={openNew}>
             <Plus className="w-4 h-4" /> Nuevo concepto
@@ -129,22 +126,7 @@ export default function ConceptosPage() {
       />
 
       <div className="card p-0 overflow-hidden">
-        <div className="px-5 py-4 border-b border-[var(--border)] flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
-          <div className="flex gap-1">
-            {(["todos", "ingreso", "egreso", "ambos"] as const).map((f) => (
-              <button
-                key={f}
-                onClick={() => setFilterTipo(f)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                  filterTipo === f
-                    ? "bg-[var(--primary-soft)] text-[var(--primary-hover)]"
-                    : "text-[var(--muted)] hover:bg-slate-100"
-                }`}
-              >
-                {f === "todos" ? "Todos" : TIPO_LABELS[f]}
-              </button>
-            ))}
-          </div>
+        <div className="px-5 py-4 border-b border-[var(--border)] flex justify-end">
           <div className="relative">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
             <input
@@ -156,11 +138,15 @@ export default function ConceptosPage() {
           </div>
         </div>
 
-        {filtered.length === 0 ? (
+        {loading ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="w-6 h-6 animate-spin text-[var(--muted)]" />
+          </div>
+        ) : filtered.length === 0 ? (
           <EmptyState
             icon={<Layers className="w-6 h-6" />}
             title={conceptos?.length ? "Sin resultados" : "Aún no hay conceptos"}
-            description="Creá conceptos para clasificar tus facturas, pagos e ingresos en lugar de categorías fijas."
+            description="Creá conceptos para clasificar tus facturas, pagos e ingresos."
             action={
               !conceptos?.length && (
                 <button className="btn btn-primary" onClick={openNew}>
@@ -174,7 +160,6 @@ export default function ConceptosPage() {
             <thead>
               <tr>
                 <th>Nombre</th>
-                <th>Aplica a</th>
                 <th>Descripción</th>
                 <th className="text-right">Acciones</th>
               </tr>
@@ -182,10 +167,15 @@ export default function ConceptosPage() {
             <tbody>
               {filtered.map((c) => (
                 <tr key={c.id}>
-                  <td className="font-medium">{c.nombre}</td>
-                  <td>
-                    <span className={`badge ${TIPO_BADGE[c.tipo]}`}>
-                      {TIPO_LABELS[c.tipo]}
+                  <td className="font-medium">
+                    <span className="inline-flex items-center gap-2">
+                      {c.nombre}
+                      {c.es_anticipo && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
+                          <ArrowUpRight className="w-3 h-3" />
+                          Anticipo
+                        </span>
+                      )}
                     </span>
                   </td>
                   <td className="text-[var(--muted)] max-w-xs truncate">
@@ -206,12 +196,11 @@ export default function ConceptosPage() {
         )}
       </div>
 
-      <Modal
-        open={open}
-        onClose={() => setOpen(false)}
-        title={editing ? "Editar concepto" : "Nuevo concepto"}
-      >
+      <Modal open={open} onClose={() => setOpen(false)} title={editing ? "Editar concepto" : "Nuevo concepto"}>
         <form onSubmit={save} className="space-y-4">
+          {editing && (
+            <EntityMeta entity="conceptos" entityId={editing.id} variant="block" />
+          )}
           <div>
             <label className="label">Nombre *</label>
             <input
@@ -223,18 +212,6 @@ export default function ConceptosPage() {
             />
           </div>
           <div>
-            <label className="label">Aplica a *</label>
-            <select
-              className="select"
-              value={form.tipo}
-              onChange={(e) => setForm({ ...form, tipo: e.target.value as ConceptoTipo })}
-            >
-              <option value="ambos">Ambos (ingresos y egresos)</option>
-              <option value="ingreso">Solo ingresos</option>
-              <option value="egreso">Solo egresos</option>
-            </select>
-          </div>
-          <div>
             <label className="label">Descripción</label>
             <textarea
               className="textarea"
@@ -243,6 +220,25 @@ export default function ConceptosPage() {
               onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
             />
           </div>
+          <label className="flex items-start gap-3 p-3 border border-[var(--border)] rounded-lg cursor-pointer hover:bg-slate-50">
+            <input
+              type="checkbox"
+              checked={form.es_anticipo}
+              onChange={(e) => setForm({ ...form, es_anticipo: e.target.checked })}
+              className="mt-0.5"
+            />
+            <div className="flex-1">
+              <p className="font-medium text-sm flex items-center gap-2">
+                Es un anticipo a proveedor
+                <span className="text-[10px] font-semibold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
+                  Anticipo
+                </span>
+              </p>
+              <p className="text-xs text-[var(--muted)] mt-1">
+                Los pagos hechos con este concepto van a tratarse como <strong>anticipos</strong> y van a aparecer en la pantalla del contacto del proveedor para que puedas aplicarlos a facturas futuras.
+              </p>
+            </div>
+          </label>
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>
               Cancelar

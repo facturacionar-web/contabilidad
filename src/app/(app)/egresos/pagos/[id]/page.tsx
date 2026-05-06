@@ -8,6 +8,7 @@ import { useConfig } from "@/lib/useConfig";
 import { CurrencyCode } from "@/lib/countries";
 import { formatMoney, formatDate } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
+import EntityMeta from "@/components/EntityMeta";
 import { ArrowLeft, CreditCard, Receipt } from "lucide-react";
 
 export default function PagoDetailPage({
@@ -77,6 +78,20 @@ export default function PagoDetailPage({
   const isForeign = pago?.moneda !== base;
   const tasa = Number(pago?.tasa_cambio) || 1;
 
+  // Totales de facturas aplicadas en este pago
+  const totalesFacturas = useMemo(() => {
+    const subtotal = fps.reduce((s, fp) => s + Number(fp.monto), 0);
+    const retenido = fps.reduce(
+      (s, fp) => s + (fp.retenciones ?? []).reduce((sr, r) => sr + Number(r.monto || 0), 0),
+      0
+    );
+    return {
+      subtotal: Math.round(subtotal * 100) / 100,
+      retenido: Math.round(retenido * 100) / 100,
+      total: Math.round((subtotal - retenido) * 100) / 100,
+    };
+  }, [fps]);
+
   if (pago === undefined) {
     return (
       <div className="flex items-center justify-center py-20 text-[var(--muted)]">
@@ -115,6 +130,8 @@ export default function PagoDetailPage({
         description={proveedor?.nombre ?? "Sin proveedor"}
       />
 
+      <EntityMeta entity="gastos" entityId={pago.id} variant="block" className="mb-4 -mt-4" />
+
       {/* Resumen */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         <div className="card py-3">
@@ -142,13 +159,34 @@ export default function PagoDetailPage({
         </div>
 
         <div className="card py-3">
-          <p className="text-xs text-[var(--muted)] mb-1">Total pagado</p>
-          <p className="text-2xl font-bold text-red-600">
-            {formatMoney(Number(pago.total), pago.moneda, country.locale)}
-          </p>
+          {esPagoFactura && totalesFacturas.retenido > 0 ? (
+            <>
+              <div className="flex justify-between text-xs text-[var(--muted)]">
+                <span>Subtotal</span>
+                <span>{formatMoney(totalesFacturas.subtotal, pago.moneda, country.locale)}</span>
+              </div>
+              <div className="flex justify-between text-xs text-amber-600 mt-0.5">
+                <span>Importe retenido</span>
+                <span>− {formatMoney(totalesFacturas.retenido, pago.moneda, country.locale)}</span>
+              </div>
+              <div className="flex justify-between items-baseline mt-1.5 pt-1.5 border-t border-[var(--border)]">
+                <span className="text-xs text-[var(--muted)]">Total</span>
+                <span className="text-xl font-bold text-red-600">
+                  {formatMoney(totalesFacturas.total, pago.moneda, country.locale)}
+                </span>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-xs text-[var(--muted)] mb-1">Total pagado</p>
+              <p className="text-2xl font-bold text-red-600">
+                {formatMoney(Number(pago.total), pago.moneda, country.locale)}
+              </p>
+            </>
+          )}
           {isForeign && tasa > 1 && (
             <p className="text-xs text-amber-700 mt-1">
-              ≈ {formatMoney(Number(pago.total) * tasa, base, country.locale)}
+              ≈ {formatMoney((esPagoFactura ? totalesFacturas.total : Number(pago.total)) * tasa, base, country.locale)}
               {" "}(1 {pago.moneda} = {tasa} {base})
             </p>
           )}
@@ -165,26 +203,20 @@ export default function PagoDetailPage({
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-[var(--border)]">
               <tr>
-                <th className="text-left px-5 py-2.5 font-medium text-[var(--muted)] text-xs uppercase tracking-wide">
-                  N° Factura
-                </th>
-                <th className="text-right px-4 py-2.5 font-medium text-[var(--muted)] text-xs uppercase tracking-wide">
-                  Total factura
-                </th>
-                <th className="text-right px-4 py-2.5 font-medium text-[var(--muted)] text-xs uppercase tracking-wide">
-                  Ya pagado antes
-                </th>
-                <th className="text-left px-4 py-2.5 font-medium text-[var(--muted)] text-xs uppercase tracking-wide">
-                  Retenciones
-                </th>
-                <th className="text-right px-5 py-2.5 font-medium text-[var(--muted)] text-xs uppercase tracking-wide">
-                  Monto aplicado
-                </th>
+                <th className="text-left px-5 py-2.5 font-medium text-[var(--muted)] text-xs uppercase tracking-wide">N° Factura</th>
+                <th className="text-left px-4 py-2.5 font-medium text-[var(--muted)] text-xs uppercase tracking-wide whitespace-nowrap">Fecha</th>
+                <th className="text-left px-4 py-2.5 font-medium text-[var(--muted)] text-xs uppercase tracking-wide whitespace-nowrap">Vencimiento</th>
+                <th className="text-right px-4 py-2.5 font-medium text-[var(--muted)] text-xs uppercase tracking-wide whitespace-nowrap">Total</th>
+                <th className="text-right px-4 py-2.5 font-medium text-[var(--muted)] text-xs uppercase tracking-wide whitespace-nowrap">Ya pagado</th>
+                <th className="text-right px-4 py-2.5 font-medium text-[var(--muted)] text-xs uppercase tracking-wide whitespace-nowrap">Por pagar</th>
+                <th className="text-left px-4 py-2.5 font-medium text-[var(--muted)] text-xs uppercase tracking-wide">Retenciones</th>
+                <th className="text-right px-5 py-2.5 font-medium text-[var(--muted)] text-xs uppercase tracking-wide whitespace-nowrap">Monto</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border)]">
               {fps.map((fp) => {
                 const factura = todasLasFacturas?.find((f) => f.id === fp.factura_id);
+                const porPagarAntes = Number(fp.total_factura) - Number(fp.monto_pagado_antes);
                 return (
                   <tr key={fp.factura_id} className="hover:bg-slate-50">
                     <td className="px-5 py-3 font-medium">
@@ -199,38 +231,72 @@ export default function PagoDetailPage({
                         fp.numero_factura ?? `#${fp.factura_id}`
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right text-[var(--muted)]">
+                    <td className="px-4 py-3 text-[var(--muted)] whitespace-nowrap">
+                      {factura ? formatDate(factura.fecha, country.locale) : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-[var(--muted)] whitespace-nowrap">
+                      {factura?.fecha_vencimiento ? formatDate(factura.fecha_vencimiento, country.locale) : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
                       {formatMoney(fp.total_factura, pago.moneda, country.locale)}
                     </td>
-                    <td className="px-4 py-3 text-right text-[var(--muted)]">
+                    <td className="px-4 py-3 text-right text-[var(--muted)] whitespace-nowrap">
                       {formatMoney(fp.monto_pagado_antes, pago.moneda, country.locale)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-amber-600 whitespace-nowrap">
+                      {formatMoney(Math.max(0, porPagarAntes), pago.moneda, country.locale)}
                     </td>
                     <td className="px-4 py-3 text-[var(--muted)] text-xs">
                       {fp.retenciones && fp.retenciones.length > 0
                         ? fp.retenciones
-                            .map(
-                              (r) =>
-                                `${r.tipo}: ${formatMoney(r.monto, pago.moneda, country.locale)}`
-                            )
+                            .map((r) => `${r.tipo}: ${formatMoney(r.monto, pago.moneda, country.locale)}`)
                             .join(", ")
                         : "—"}
                     </td>
-                    <td className="px-5 py-3 text-right font-semibold text-green-700">
+                    <td className="px-5 py-3 text-right font-semibold whitespace-nowrap">
                       {formatMoney(fp.monto, pago.moneda, country.locale)}
                     </td>
                   </tr>
                 );
               })}
             </tbody>
-            <tfoot className="border-t-2 border-[var(--border)] bg-slate-100/60">
+            <tfoot className="border-t-2 border-[var(--border)] bg-[var(--surface-2)]">
               <tr>
-                <td colSpan={4} className="px-5 py-2.5 text-right font-semibold text-[var(--muted)]">
-                  Total pagado
+                <td colSpan={7} className="px-5 py-2 text-right text-sm text-[var(--muted)]">
+                  Subtotal
                 </td>
-                <td className="px-5 py-2.5 text-right font-bold text-base text-red-700">
-                  {formatMoney(Number(pago.total), pago.moneda, country.locale)}
+                <td className="px-5 py-2 text-right font-medium whitespace-nowrap">
+                  {formatMoney(totalesFacturas.subtotal, pago.moneda, country.locale)}
                 </td>
               </tr>
+              {totalesFacturas.retenido > 0 && (
+                <tr>
+                  <td colSpan={7} className="px-5 py-2 text-right text-sm text-[var(--muted)]">
+                    Importe retenido
+                  </td>
+                  <td className="px-5 py-2 text-right font-medium text-amber-600 whitespace-nowrap">
+                    − {formatMoney(totalesFacturas.retenido, pago.moneda, country.locale)}
+                  </td>
+                </tr>
+              )}
+              <tr className="bg-[var(--surface-hover)]">
+                <td colSpan={7} className="px-5 py-2.5 text-right font-semibold text-[var(--foreground)]">
+                  Total {pago.moneda}
+                </td>
+                <td className="px-5 py-2.5 text-right font-bold text-base text-red-500 whitespace-nowrap">
+                  {formatMoney(totalesFacturas.total, pago.moneda, country.locale)}
+                </td>
+              </tr>
+              {isForeign && tasa > 1 && (
+                <tr className="bg-amber-50">
+                  <td colSpan={7} className="px-5 py-2 text-right text-sm text-amber-700">
+                    Total {base} (1 {pago.moneda} = {tasa} {base})
+                  </td>
+                  <td className="px-5 py-2 text-right font-bold text-amber-700 whitespace-nowrap">
+                    {formatMoney(totalesFacturas.total * tasa, base, country.locale)}
+                  </td>
+                </tr>
+              )}
             </tfoot>
           </table>
         </div>
@@ -264,12 +330,12 @@ export default function PagoDetailPage({
                 </tr>
               ))}
             </tbody>
-            <tfoot className="border-t-2 border-[var(--border)] bg-slate-100/60">
+            <tfoot className="border-t-2 border-[var(--border)] bg-[var(--surface-hover)]">
               <tr>
                 <td className="px-5 py-2.5 text-right font-semibold text-[var(--muted)]">
                   Total
                 </td>
-                <td className="px-5 py-2.5 text-right font-bold text-base text-red-700">
+                <td className="px-5 py-2.5 text-right font-bold text-base text-red-500">
                   {formatMoney(Number(pago.total), pago.moneda, country.locale)}
                 </td>
               </tr>

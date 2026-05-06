@@ -246,25 +246,100 @@ export default function ConfiguracionPage() {
   async function exportData() {
     try {
       const supabase = createClient();
-      const [contactos, ingresos, gastos, notas] = await Promise.all([
-        supabase.from("contactos").select("*"),
-        supabase.from("ingresos").select("*"),
-        supabase.from("gastos").select("*"),
-        supabase.from("notas_credito").select("*"),
+      const paisActivo = config?.pais;
+
+      // Helper: trae todas las filas (incluyendo soft-deleted) en chunks de 1000
+      // (Supabase tiene límite por defecto, así que paginamos hasta agotar)
+      async function fetchAll(table: string) {
+        const all: Record<string, unknown>[] = [];
+        const chunkSize = 1000;
+        let offset = 0;
+        // Tope de seguridad: 200K filas por tabla, suficiente para casi cualquier escenario
+        const maxRows = 200_000;
+        while (offset < maxRows) {
+          let q = supabase.from(table).select("*").range(offset, offset + chunkSize - 1);
+          if (paisActivo && table !== "config") q = q.eq("ctx_pais", paisActivo);
+          const { data, error } = await q;
+          if (error) {
+            console.warn(`[export] ${table} (offset ${offset}):`, error.message);
+            break;
+          }
+          if (!data || data.length === 0) break;
+          all.push(...(data as Record<string, unknown>[]));
+          if (data.length < chunkSize) break;
+          offset += chunkSize;
+        }
+        return all;
+      }
+
+      const [
+        contactos,
+        ingresos,
+        gastos,
+        notas,
+        conceptos,
+        cuentas,
+        configRows,
+        conciliacion,
+        actividad,
+      ] = await Promise.all([
+        fetchAll("contactos"),
+        fetchAll("ingresos"),
+        fetchAll("gastos"),
+        fetchAll("notas_credito"),
+        fetchAll("conceptos"),
+        fetchAll("cuentas"),
+        fetchAll("config"),
+        fetchAll("conciliacion_movimientos"),
+        fetchAll("activity_log"),
       ]);
+
+      // localStorage relevante (config de proveedores y snapshots de pagos)
+      const localStore: Record<string, string> = {};
+      if (typeof window !== "undefined") {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (!k) continue;
+          if (k.startsWith("concepto_cfg:") || k.startsWith("pago_snap:") || k.startsWith("last_tasa_")) {
+            localStore[k] = localStorage.getItem(k) ?? "";
+          }
+        }
+      }
+
       const data = {
-        version: 2,
+        version: 3,
         exportedAt: new Date().toISOString(),
-        contactos: contactos.data ?? [],
-        ingresos: ingresos.data ?? [],
-        gastos: gastos.data ?? [],
-        notas_credito: notas.data ?? [],
+        ctx_pais: paisActivo ?? null,
+        empresa: config?.empresa_nombre ?? null,
+        contactos,
+        ingresos,
+        gastos,
+        notas_credito: notas,
+        conceptos,
+        cuentas,
+        config: configRows,
+        conciliacion_movimientos: conciliacion,
+        activity_log: actividad,
+        localStorage: localStore,
+        stats: {
+          contactos: contactos.length,
+          ingresos: ingresos.length,
+          gastos: gastos.length,
+          notas_credito: notas.length,
+          conceptos: conceptos.length,
+          cuentas: cuentas.length,
+          conciliacion_movimientos: conciliacion.length,
+          activity_log: actividad.length,
+          localStorage_keys: Object.keys(localStore).length,
+        },
       };
+
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `contabilidad_backup_${new Date().toISOString().slice(0, 10)}.json`;
+      const paisSuffix = paisActivo ? `_${paisActivo}` : "";
+      a.download = `alegrant_backup${paisSuffix}_${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -282,22 +357,69 @@ export default function ConfiguracionPage() {
       const text = await file.text();
       try {
         const data = JSON.parse(text);
-        if (!confirm("Esto añadirá los registros del archivo a tu cuenta. ¿Continuar?")) return;
+        const version = data.version ?? 1;
+        const stats = data.stats ?? {};
+        const totalRegs = Object.values(stats).reduce((s: number, n) => s + (Number(n) || 0), 0);
+        const summary = totalRegs > 0
+          ? `Backup v${version} con ~${totalRegs} registros (${data.ctx_pais ?? "sin país"})`
+          : `Backup v${version}`;
+        if (!confirm(`${summary}\n\nEsto va a AÑADIR los registros del archivo a tu cuenta.\nLos IDs cambiarán y las relaciones internas se mantienen.\n\n¿Continuar?`)) return;
+
         const supabase = createClient();
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) throw new Error("No autenticado");
-        const tables = ["contactos", "ingresos", "gastos", "notas_credito"] as const;
-        for (const table of tables) {
+        const effectiveId = (user.user_metadata?.owner_id as string | undefined) ?? user.id;
+
+        // Tablas a importar en orden (respeta dependencias por FK)
+        // Importante: contactos/conceptos/cuentas primero porque otros dependen de ellos.
+        type TableName = "contactos" | "conceptos" | "cuentas" | "ingresos" | "gastos" | "notas_credito" | "conciliacion_movimientos";
+        const order: TableName[] = [
+          "contactos",
+          "conceptos",
+          "cuentas",
+          "ingresos",
+          "gastos",
+          "notas_credito",
+          "conciliacion_movimientos",
+        ];
+        const counts: Record<string, number> = {};
+
+        for (const table of order) {
           const rows = (data[table] ?? []) as Record<string, unknown>[];
           if (rows.length === 0) continue;
-          const clean = rows.map(({ id: _id, user_id: _uid, created_at: _ca, ...rest }) => ({
-            ...rest,
-            user_id: user.id,
-          }));
-          const { error } = await supabase.from(table).insert(clean as never);
-          if (error) throw new Error(`Error en ${table}: ${error.message}`);
+          // Sacar id, user_id y created_at — Supabase los regenera
+          const clean = rows.map(r => {
+            const out = { ...r } as Record<string, unknown>;
+            delete out.id;
+            delete out.user_id;
+            delete out.created_at;
+            delete out.imported_at;
+            out.user_id = effectiveId;
+            return out;
+          });
+          // Insertar en chunks de 200 para no romper si hay miles de filas
+          for (let i = 0; i < clean.length; i += 200) {
+            const chunk = clean.slice(i, i + 200);
+            const { error } = await supabase.from(table).insert(chunk as never);
+            if (error) {
+              console.error(`[import] ${table} chunk ${i}:`, error.message);
+              throw new Error(`Error en ${table}: ${error.message}`);
+            }
+          }
+          counts[table] = clean.length;
         }
-        alert("Datos importados correctamente.");
+
+        // Restaurar localStorage si está
+        if (data.localStorage && typeof data.localStorage === "object") {
+          let lsCount = 0;
+          for (const [k, v] of Object.entries(data.localStorage as Record<string, string>)) {
+            try { localStorage.setItem(k, v); lsCount++; } catch { /* quota? */ }
+          }
+          counts["localStorage"] = lsCount;
+        }
+
+        const summary2 = Object.entries(counts).map(([t, n]) => `• ${t}: ${n}`).join("\n");
+        alert(`Datos importados correctamente:\n\n${summary2}`);
         location.reload();
       } catch (err) {
         alert("Error al importar: " + (err as Error).message);
@@ -307,16 +429,28 @@ export default function ConfiguracionPage() {
   }
 
   async function deleteAll() {
-    if (!confirm("⚠️ Esto borrará TODOS tus datos (contactos, ingresos, gastos, notas). No se puede deshacer. ¿Continuar?")) return;
-    if (!confirm("Confirma una vez más: ¿borrar todos los datos?")) return;
+    if (!confirm("⚠️ Esto borrará TODOS tus datos del país activo (contactos, conceptos, cuentas, ingresos, gastos, notas, conciliación). No se puede deshacer. ¿Continuar?")) return;
+    if (!confirm("Confirmá una vez más: ¿borrar todos los datos del país activo?")) return;
     try {
       const supabase = createClient();
-      const tables = ["notas_credito", "gastos", "ingresos", "contactos"] as const;
+      const paisActivo = config?.pais;
+      // Orden para respetar FKs (hijas primero)
+      const tables = [
+        "conciliacion_movimientos",
+        "notas_credito",
+        "gastos",
+        "ingresos",
+        "contactos",
+        "conceptos",
+        "cuentas",
+      ] as const;
       for (const table of tables) {
-        const { error } = await supabase.from(table).delete().gte("id", 0);
+        let q = supabase.from(table).delete().gte("id", 0);
+        if (paisActivo) q = q.eq("ctx_pais", paisActivo);
+        const { error } = await q;
         if (error) throw new Error(`Error borrando ${table}: ${error.message}`);
       }
-      alert("Todos los datos fueron eliminados.");
+      alert("Todos los datos del país fueron eliminados.");
       location.reload();
     } catch (err) {
       alert("Error: " + (err as Error).message);
@@ -440,8 +574,23 @@ export default function ConfiguracionPage() {
 
       <div className="card max-w-3xl mt-8">
         <h3 className="font-semibold mb-2">Respaldo de datos</h3>
-        <p className="text-sm text-[var(--muted)] mb-4">
-          Exportá un archivo JSON con todos tus registros como respaldo adicional.
+        <p className="text-sm text-[var(--muted)] mb-2">
+          Exportá un archivo JSON con todos los datos del país activo como respaldo:
+        </p>
+        <ul className="text-xs text-[var(--muted)] mb-4 grid grid-cols-2 gap-x-4 gap-y-0.5 list-disc list-inside">
+          <li>Contactos</li>
+          <li>Conceptos</li>
+          <li>Cuentas</li>
+          <li>Configuración de empresa</li>
+          <li>Ingresos</li>
+          <li>Gastos y facturas</li>
+          <li>Notas de crédito</li>
+          <li>Conciliación bancaria</li>
+          <li>Historial de actividad</li>
+          <li>Distribución por proveedor *</li>
+        </ul>
+        <p className="text-[11px] text-slate-400 italic mb-4">
+          * La distribución por proveedor (% por país) se guarda en este navegador. Solo se exporta lo que hayas configurado desde aquí.
         </p>
         <div className="flex flex-wrap gap-2">
           <button className="btn btn-secondary" type="button" onClick={exportData}>
