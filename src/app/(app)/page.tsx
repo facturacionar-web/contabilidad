@@ -1,4 +1,5 @@
 "use client";
+import { useMemo } from "react";
 import { useTable, paisFilter } from "@/lib/useSupabaseData";
 import { useConfig } from "@/lib/useConfig";
 import { formatMoney, formatDate, monthRange, todayISO } from "@/lib/format";
@@ -9,9 +10,28 @@ import {
   Users,
   Wallet,
   ArrowRight,
+  ArrowUp,
+  ArrowDown,
+  BarChart3,
+  Minus,
 } from "lucide-react";
 import Link from "next/link";
 import PageHeader from "@/components/PageHeader";
+import PaymentCalendar from "@/components/PaymentCalendar";
+import MonthlyBarChart from "@/components/MonthlyBarChart";
+import TopProveedores from "@/components/TopProveedores";
+import CashFlowForecast from "@/components/CashFlowForecast";
+
+// Helpers de fechas para mes anterior y rango de 6 meses
+function shiftMonth(iso: string, delta: number): string {
+  const [y, m] = iso.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+}
+function monthName(iso: string, locale: string): string {
+  const [y, m] = iso.split("-").map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString(locale, { month: "short" });
+}
 
 export default function Dashboard() {
   const { config, country } = useConfig();
@@ -50,6 +70,19 @@ export default function Dashboard() {
   const sumNotas = notasMes.reduce((s, x) => s + toLocal(Number(x.monto), x.moneda, Number(x.tasa_cambio || 1)), 0);
   const balance = sumIngresos - sumGastos;
 
+  // Mes anterior para variación
+  const prev = monthRange(shiftMonth(todayISO(), -1));
+  const prevIngresos = (ingresos ?? []).filter(r => r.fecha >= prev.start && r.fecha <= prev.end);
+  const prevPagos = (pagosDB ?? []).filter(r => r.fecha >= prev.start && r.fecha <= prev.end);
+  const prevSumIngresos = prevIngresos.reduce((s, x) => s + toLocal(Number(x.monto), x.moneda, Number(x.tasa_cambio || 1)), 0);
+  const prevSumGastos = prevPagos.reduce((s, g) => s + toLocal(Number(g.total), g.moneda, Number(g.tasa_cambio || 1)), 0);
+  const prevBalance = prevSumIngresos - prevSumGastos;
+
+  function pctChange(curr: number, before: number): number | null {
+    if (before === 0) return null;
+    return ((curr - before) / Math.abs(before)) * 100;
+  }
+
   const pendientes = (facturasDB ?? []).filter(
     (g) => g.estado === "pendiente" || g.estado === "parcial"
   );
@@ -58,11 +91,35 @@ export default function Dashboard() {
   );
 
   const kpis = [
-    { label: "Ingresos del mes", value: sumIngresos, icon: TrendingUp, color: "text-green-600", bg: "bg-green-50" },
-    { label: "Gastos del mes", value: sumGastos, icon: TrendingDown, color: "text-red-600", bg: "bg-red-50" },
-    { label: "Balance del mes", value: balance, icon: Wallet, color: balance >= 0 ? "text-teal-600" : "text-red-600", bg: balance >= 0 ? "bg-teal-50" : "bg-red-50" },
-    { label: "Por pagar", value: pendientesMonto, icon: FileMinus, color: "text-amber-600", bg: "bg-amber-50" },
+    { label: "Ingresos del mes", value: sumIngresos, prev: prevSumIngresos, icon: TrendingUp, color: "text-green-600", bg: "bg-green-50", upGood: true },
+    { label: "Gastos del mes", value: sumGastos, prev: prevSumGastos, icon: TrendingDown, color: "text-red-600", bg: "bg-red-50", upGood: false },
+    { label: "Balance del mes", value: balance, prev: prevBalance, icon: Wallet, color: balance >= 0 ? "text-teal-600" : "text-red-600", bg: balance >= 0 ? "bg-teal-50" : "bg-red-50", upGood: true },
+    { label: "Por pagar", value: pendientesMonto, prev: undefined, icon: FileMinus, color: "text-amber-600", bg: "bg-amber-50", upGood: false },
   ];
+
+  // ── Serie mensual: últimos 6 meses ─────────────────────────────────────
+  const monthlyData = useMemo(() => {
+    const months: { iso: string; ingresos: number; egresos: number }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const monthStart = shiftMonth(todayISO(), -i);
+      const r = monthRange(monthStart);
+      const ing = (ingresos ?? [])
+        .filter(x => x.fecha >= r.start && x.fecha <= r.end)
+        .reduce((s, x) => s + toLocal(Number(x.monto), x.moneda, Number(x.tasa_cambio || 1)), 0);
+      const eg = (pagosDB ?? [])
+        .filter(g => g.fecha >= r.start && g.fecha <= r.end)
+        .reduce((s, g) => s + toLocal(Number(g.total), g.moneda, Number(g.tasa_cambio || 1)), 0);
+      months.push({ iso: monthStart, ingresos: ing, egresos: eg });
+    }
+    return months;
+  }, [ingresos, pagosDB, base]);
+
+  // Rango: últimos 90 días para top proveedores
+  const since90 = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 90);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  })();
 
   const recentIngresos = [...ingresosMes].sort((a, b) => b.fecha.localeCompare(a.fecha)).slice(0, 5);
   const recentGastos = [...pagosMes].sort((a, b) => b.fecha.localeCompare(a.fecha)).slice(0, 5);
@@ -77,6 +134,13 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         {kpis.map((k) => {
           const Icon = k.icon;
+          const variation = k.prev !== undefined ? pctChange(k.value, k.prev) : null;
+          const goingUp = variation !== null && variation > 0.5;
+          const goingDown = variation !== null && variation < -0.5;
+          const positiveDirection =
+            (k.upGood && goingUp) || (!k.upGood && goingDown);
+          const negativeDirection =
+            (k.upGood && goingDown) || (!k.upGood && goingUp);
           return (
             <div key={k.label} className="card">
               <div className="flex items-center justify-between mb-3">
@@ -86,9 +150,59 @@ export default function Dashboard() {
                 </span>
               </div>
               <div className="text-2xl font-semibold">{formatMoney(k.value, base, country.locale)}</div>
+              {variation !== null && (
+                <div className="flex items-center gap-1 mt-1.5 text-xs">
+                  <span
+                    className={`inline-flex items-center gap-0.5 font-medium ${
+                      positiveDirection
+                        ? "text-emerald-600"
+                        : negativeDirection
+                        ? "text-red-600"
+                        : "text-slate-400"
+                    }`}
+                  >
+                    {goingUp ? (
+                      <ArrowUp className="w-3 h-3" />
+                    ) : goingDown ? (
+                      <ArrowDown className="w-3 h-3" />
+                    ) : (
+                      <Minus className="w-3 h-3" />
+                    )}
+                    {Math.abs(variation).toFixed(1)}%
+                  </span>
+                  <span className="text-slate-400">vs. mes anterior</span>
+                </div>
+              )}
+              {k.prev === undefined && (
+                <div className="text-xs text-slate-400 mt-1.5">
+                  {k.label === "Por pagar" ? `${pendientes.length} factura${pendientes.length !== 1 ? "s" : ""}` : ""}
+                </div>
+              )}
             </div>
           );
         })}
+      </div>
+
+      {/* Gráfico mensual */}
+      <div className="card mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <BarChart3 className="w-4 h-4 text-[var(--primary)]" />
+            <h3 className="font-semibold text-sm">Últimos 6 meses</h3>
+          </div>
+          <span className="text-xs text-slate-400">
+            En {base}
+          </span>
+        </div>
+        <MonthlyBarChart
+          monthLabels={monthlyData.map(m => monthName(m.iso, country.locale))}
+          series={[
+            { label: "Ingresos", color: "#10b981", values: monthlyData.map(m => m.ingresos) },
+            { label: "Egresos", color: "#ef4444", values: monthlyData.map(m => m.egresos) },
+          ]}
+          monedaBase={base as never}
+          locale={country.locale}
+        />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
@@ -113,6 +227,37 @@ export default function Dashboard() {
             amount: Number(g.total), currency: g.moneda, date: g.fecha, positive: false,
           }))}
           locale={country.locale}
+        />
+      </div>
+
+      {/* Flujo de caja proyectado */}
+      <div className="mb-6">
+        <CashFlowForecast
+          facturas={facturasDB ?? []}
+          monedaBase={base as never}
+          locale={country.locale}
+        />
+      </div>
+
+      <div className="mb-6">
+        <PaymentCalendar
+          facturas={facturasDB ?? []}
+          contactos={contactos ?? []}
+          monedaBase={base as never}
+          locale={country.locale}
+        />
+      </div>
+
+      {/* Top proveedores últimos 90 días */}
+      <div className="mb-6">
+        <TopProveedores
+          pagos={pagosDB ?? []}
+          facturas={facturasDB ?? []}
+          contactos={contactos ?? []}
+          monedaBase={base as never}
+          locale={country.locale}
+          startDate={since90}
+          title="Top proveedores (últimos 90 días)"
         />
       </div>
 
