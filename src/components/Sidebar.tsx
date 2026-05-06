@@ -18,6 +18,9 @@ import {
   FileMinus,
   ArrowDownCircle,
   Package,
+  Trash2,
+  History,
+  Scale,
 } from "lucide-react";
 
 type SubItem = { href: string; label: string };
@@ -52,12 +55,25 @@ const nav: (NavLink | NavGroup)[] = [
     children: [
       { href: "/egresos/facturas", label: "Facturas" },
       { href: "/egresos/pagos", label: "Pagos" },
+      { href: "/egresos/carga-masiva", label: "Carga masiva de facturas" },
     ],
   },
   { href: "/conceptos", label: "Conceptos", icon: Layers },
   { href: "/cuentas", label: "Cuentas", icon: Building2 },
+  { href: "/conciliacion", label: "Conciliación", icon: Scale },
   { href: "/proveedores", label: "Gastos por proveedor", icon: Package },
-  { href: "/reportes", label: "Reportes", icon: BarChart3 },
+  {
+    key: "reportes",
+    label: "Reportes",
+    icon: BarChart3,
+    children: [
+      { href: "/reportes/gastos", label: "Gastos" },
+      { href: "/reportes/retenciones", label: "Retenciones" },
+      { href: "/reportes/libro-diario", label: "Libro diario" },
+    ],
+  },
+  { href: "/historial", label: "Historial", icon: History },
+  { href: "/papelera", label: "Papelera", icon: Trash2 },
   { href: "/configuracion", label: "Configuración", icon: Settings },
 ];
 

@@ -1,42 +1,34 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { useConfig, saveConfig } from "@/lib/useConfig";
-import { useTable, paisFilter } from "@/lib/useSupabaseData";
 import { COUNTRIES } from "@/lib/countries";
 import { LogOut, ChevronDown, Check, Search } from "lucide-react";
+import ThemeToggle from "./ThemeToggle";
 
 const PAISES_APP = ["MX", "AR", "CL"] as const;
 
 export default function Topbar({ userEmail }: { userEmail: string }) {
-  const router = useRouter();
   const { config, allConfigs, country } = useConfig();
-  const pais = config?.pais;
   const [open, setOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
-  const [search, setSearch] = useState("");
-  const [searchFocus, setSearchFocus] = useState(false);
+  const [isMac, setIsMac] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const searchRef = useRef<HTMLDivElement>(null);
-
-  const { data: contactos } = useTable("contactos", {
-    orderBy: "nombre", ascending: true, filter: paisFilter(pais), skip: !pais, deps: [pais],
-  });
-
-  const contactosFiltrados = search.trim()
-    ? (contactos ?? []).filter((c) =>
-        c.nombre.toLowerCase().includes(search.toLowerCase()) ||
-        (c.tax_id?.toLowerCase() ?? "").includes(search.toLowerCase())
-      ).slice(0, 6)
-    : [];
 
   useEffect(() => {
-    function handle(e: MouseEvent) {
-      if (searchRef.current && !searchRef.current.contains(e.target as Node)) setSearchFocus(false);
-    }
-    document.addEventListener("mousedown", handle);
-    return () => document.removeEventListener("mousedown", handle);
+    setIsMac(navigator.platform.toUpperCase().indexOf("MAC") >= 0);
   }, []);
+
+  // Disparar Cmd+K (sintetizar evento de teclado para abrir el command palette)
+  function openSearch() {
+    const event = new KeyboardEvent("keydown", {
+      key: "k",
+      code: "KeyK",
+      ctrlKey: !isMac,
+      metaKey: isMac,
+      bubbles: true,
+    });
+    window.dispatchEvent(event);
+  }
 
   // Cerrar dropdown al hacer clic afuera
   useEffect(() => {
@@ -77,27 +69,17 @@ export default function Topbar({ userEmail }: { userEmail: string }) {
         </h1>
       </div>
 
-      <div className="flex-1 max-w-sm relative" ref={searchRef}>
-        <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
-        <input
-          className="input pl-9 w-full text-sm"
-          placeholder="Buscar contacto…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          onFocus={() => setSearchFocus(true)}
-        />
-        {(searchFocus || search) && contactosFiltrados.length > 0 && (
-          <div className="absolute top-full mt-1 w-full bg-white border border-[var(--border)] rounded-xl shadow-lg z-50 overflow-hidden">
-            {contactosFiltrados.map((c) => (
-              <button key={c.id}
-                className="w-full px-4 py-2.5 text-left hover:bg-slate-50 flex items-center justify-between gap-3"
-                onClick={() => { setSearch(""); setSearchFocus(false); router.push(`/contactos/${c.id}`); }}>
-                <span className="font-medium text-sm">{c.nombre}</span>
-                <span className="text-xs text-[var(--muted)] shrink-0">{c.tipo}{c.tax_id ? ` · ${c.tax_id}` : ""}</span>
-              </button>
-            ))}
-          </div>
-        )}
+      <div className="flex-1 max-w-sm">
+        <button
+          onClick={openSearch}
+          className="w-full flex items-center gap-2 px-3 py-2 bg-slate-50 hover:bg-slate-100 border border-[var(--border)] rounded-lg text-sm text-slate-500 transition-colors group"
+        >
+          <Search className="w-4 h-4 text-slate-400" />
+          <span className="flex-1 text-left">Buscar todo…</span>
+          <kbd className="hidden sm:inline-flex items-center gap-0.5 text-[10px] font-medium text-slate-500 bg-white border border-slate-200 px-1.5 py-0.5 rounded">
+            {isMac ? "⌘" : "Ctrl"} K
+          </kbd>
+        </button>
       </div>
 
       <div className="ml-auto">
@@ -141,6 +123,7 @@ export default function Topbar({ userEmail }: { userEmail: string }) {
           )}
         </div>
 
+        <ThemeToggle />
         <span className="text-[var(--muted)] hidden md:inline">{userEmail}</span>
         <form action="/auth/logout" method="POST">
           <button className="btn btn-ghost" title="Cerrar sesión" type="submit">

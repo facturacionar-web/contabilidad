@@ -12,7 +12,138 @@
   --danger: #dc2626;
   --success: #16a34a;
   --warning: #d97706;
+  --surface-hover: #f8fafc;
+  --surface-2: #f1f5f9;
 }
+
+html.dark {
+  --background: #0b1220;
+  --foreground: #e2e8f0;
+  --card: #111827;
+  --border: #1f2937;
+  --muted: #94a3b8;
+  --primary: #0d9488;          /* teal-600, más sobrio que teal-400 */
+  --primary-hover: #14b8a6;    /* teal-500 */
+  --primary-soft: #134e4a;     /* teal-900, fondo suave */
+  --danger: #f87171;
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --surface-hover: #1f2937;
+  --surface-2: #1e293b;
+  color-scheme: dark;
+}
+
+/* ─────────── Adaptaciones de Tailwind para modo oscuro ──────────── */
+
+/* Fondos blancos / grises claros → cards/surfaces oscuros */
+html.dark .bg-white { background-color: var(--card) !important; }
+html.dark .bg-white\/15,
+html.dark .bg-white\/10 { background-color: rgba(255,255,255,0.08) !important; }
+html.dark .bg-white\/20 { background-color: rgba(255,255,255,0.15) !important; }
+html.dark .bg-white\/60 { background-color: rgba(255,255,255,0.05) !important; }
+html.dark .bg-slate-50,
+html.dark .bg-slate-50\/30,
+html.dark .bg-slate-50\/40,
+html.dark .bg-slate-50\/50,
+html.dark .bg-slate-50\/60,
+html.dark .bg-slate-50\/70 { background-color: var(--surface-2) !important; }
+html.dark .bg-slate-100 { background-color: var(--surface-2) !important; }
+html.dark .bg-slate-200 { background-color: var(--surface-hover) !important; }
+html.dark .hover\:bg-slate-50:hover,
+html.dark .hover\:bg-slate-100:hover,
+html.dark .hover\:bg-slate-200:hover { background-color: var(--surface-hover) !important; }
+
+/* Fondos de chips de color → versiones oscuras tenues */
+html.dark .bg-emerald-50 { background-color: rgba(16,185,129,0.12) !important; }
+html.dark .bg-emerald-100 { background-color: rgba(16,185,129,0.18) !important; }
+html.dark .bg-red-50,
+html.dark .bg-red-50\/40,
+html.dark .bg-red-50\/60 { background-color: rgba(239,68,68,0.12) !important; }
+html.dark .bg-red-100 { background-color: rgba(239,68,68,0.20) !important; }
+html.dark .bg-amber-50,
+html.dark .bg-amber-50\/40,
+html.dark .bg-amber-50\/60 { background-color: rgba(245,158,11,0.12) !important; }
+html.dark .bg-amber-100 { background-color: rgba(245,158,11,0.20) !important; }
+html.dark .bg-blue-50 { background-color: rgba(59,130,246,0.12) !important; }
+html.dark .bg-blue-100 { background-color: rgba(59,130,246,0.20) !important; }
+html.dark .bg-orange-50 { background-color: rgba(249,115,22,0.12) !important; }
+html.dark .bg-orange-100 { background-color: rgba(249,115,22,0.20) !important; }
+html.dark .bg-teal-50 { background-color: rgba(20,184,166,0.12) !important; }
+html.dark .bg-green-50 { background-color: rgba(34,197,94,0.12) !important; }
+
+/* Bordes claros → bordes oscuros */
+html.dark .border-slate-200,
+html.dark .border-slate-100 { border-color: var(--border) !important; }
+html.dark .border-emerald-200 { border-color: rgba(16,185,129,0.3) !important; }
+html.dark .border-red-200 { border-color: rgba(239,68,68,0.3) !important; }
+html.dark .border-amber-200,
+html.dark .border-amber-100 { border-color: rgba(245,158,11,0.3) !important; }
+html.dark .border-blue-200 { border-color: rgba(59,130,246,0.3) !important; }
+
+/* Texto oscuro → claro */
+html.dark .text-slate-900,
+html.dark .text-slate-800 { color: var(--foreground) !important; }
+html.dark .text-slate-700 { color: #e2e8f0 !important; }
+html.dark .text-slate-600 { color: #cbd5e1 !important; }
+html.dark .text-slate-500 { color: #94a3b8 !important; }
+html.dark .text-slate-400 { color: #64748b !important; }
+html.dark .text-slate-300 { color: #475569 !important; }
+
+/* Texto de colores → versiones más claras para mejor contraste */
+html.dark .text-emerald-700,
+html.dark .text-emerald-600 { color: #34d399 !important; }
+html.dark .text-red-700,
+html.dark .text-red-600 { color: #f87171 !important; }
+html.dark .text-amber-700,
+html.dark .text-amber-800 { color: #fbbf24 !important; }
+html.dark .text-amber-600 { color: #fbbf24 !important; }
+html.dark .text-blue-700,
+html.dark .text-blue-600 { color: #60a5fa !important; }
+html.dark .text-orange-700 { color: #fb923c !important; }
+html.dark .text-teal-700,
+html.dark .text-teal-600 { color: #2dd4bf !important; }
+html.dark .text-green-600 { color: #4ade80 !important; }
+
+/* Inputs / selects en oscuro */
+html.dark .input,
+html.dark .select,
+html.dark .textarea {
+  background: var(--card);
+  color: var(--foreground);
+  border-color: var(--border);
+}
+html.dark .input::placeholder,
+html.dark .textarea::placeholder { color: #64748b; }
+html.dark input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1) opacity(0.7); }
+
+/* kbd */
+html.dark kbd { background-color: var(--surface-2) !important; color: var(--foreground) !important; border-color: var(--border) !important; }
+
+/* Backdrop de modales más oscuro */
+html.dark .bg-slate-900\/40 { background-color: rgba(0,0,0,0.6) !important; }
+
+/* Sombras más sutiles */
+html.dark .shadow-sm,
+html.dark .shadow,
+html.dark .shadow-md,
+html.dark .shadow-lg,
+html.dark .shadow-xl,
+html.dark .shadow-2xl { box-shadow: 0 4px 12px rgba(0,0,0,0.4) !important; }
+
+/* Tabla: fix para hover en filas */
+html.dark .table tbody tr:hover { background: var(--surface-hover); }
+html.dark .table th { background: var(--surface-2); color: var(--muted); }
+
+/* Botones de acción ghost */
+html.dark .btn-ghost:hover { background: var(--surface-hover); color: var(--foreground); }
+html.dark .btn-secondary { background: var(--card); color: var(--foreground); border-color: var(--border); }
+html.dark .btn-secondary:hover { background: var(--surface-hover); }
+
+/* Ring para focus / select activo */
+html.dark .ring-emerald-300\/40 { --tw-ring-color: rgba(16,185,129,0.3) !important; }
+
+/* Calendar header gradient sigue OK porque usa var(--primary) */
+/* Pero el texto blanco sobre el gradient queda igual de blanco */
 
 @theme inline {
   --color-background: var(--background);
@@ -107,6 +238,15 @@ body {
 .textarea {
   min-height: 80px;
   resize: vertical;
+}
+
+/* Date/datetime inputs: cursor pointer + área clickable extendida (ver DateInputClickHandler) */
+input[type="date"],
+input[type="datetime-local"],
+input[type="month"],
+input[type="time"],
+input[type="week"] {
+  cursor: pointer;
 }
 
 .card {
