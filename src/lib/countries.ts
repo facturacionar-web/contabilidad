@@ -65,8 +65,8 @@ export const CURRENCIES: Record<CurrencyCode, Currency> = {
 };
 
 export const PAYMENT_METHODS = [
-  "Efectivo",
   "Transferencia",
+  "Efectivo",
   "Tarjeta débito",
   "Tarjeta crédito",
   "Cheque",

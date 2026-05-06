@@ -32,6 +32,7 @@ export interface Ingreso {
   cuenta_id?: string | null;
   monto: number;
   moneda: CurrencyCode;
+  tasa_cambio?: number | null;
   metodo_pago: string;
   referencia?: string | null;
   notas?: string | null;
@@ -110,6 +111,7 @@ export interface NotaCredito {
   concepto: string;
   monto: number;
   moneda: CurrencyCode;
+  tasa_cambio?: number | null;
   motivo: string;
   notas?: string | null;
   created_at?: string;
@@ -124,6 +126,19 @@ export interface Concepto {
   nombre: string;
   tipo: ConceptoTipo;
   descripcion?: string | null;
+  es_anticipo?: boolean;
+  created_at?: string;
+}
+
+export interface AnticipoAplicacion {
+  id: number;
+  user_id?: string;
+  ctx_pais: string;
+  anticipo_pago_id: number;
+  factura_id: number;
+  monto: number;
+  fecha: string;
+  notas?: string | null;
   created_at?: string;
 }
 
@@ -138,6 +153,33 @@ export interface Cuenta {
   moneda: CurrencyCode;
   descripcion?: string | null;
   created_at?: string;
+}
+
+export type ConciliacionTipo = "debito" | "credito";
+export type ConciliacionEstado = "pendiente" | "conciliado" | "ignorado";
+export type ConciliacionMatchedBy = "auto" | "manual" | "created";
+
+export interface ConciliacionMovimiento {
+  id: number;
+  user_id?: string;
+  ctx_pais: string;
+  cuenta_id: string | null;
+  fecha: string;
+  descripcion: string | null;
+  referencia: string | null;
+  monto: number;
+  tipo: ConciliacionTipo;
+  matched_type: "pago" | "ingreso" | null;
+  matched_id: number | null;
+  matched_by: ConciliacionMatchedBy | null;
+  matched_score: number | null;
+  estado: ConciliacionEstado;
+  raw: Record<string, unknown> | null;
+  notas: string | null;
+  imported_at?: string;
+  reconciled_at?: string | null;
+  imported_batch: string | null;
+  deleted_at?: string | null;
 }
 
 export interface Config {

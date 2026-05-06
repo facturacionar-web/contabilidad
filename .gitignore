@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local files con credenciales hardcodeadas — NO commitear
+n8n_*.json
+scripts/patch_n8n.py
+ts.txt
+buildlog.txt

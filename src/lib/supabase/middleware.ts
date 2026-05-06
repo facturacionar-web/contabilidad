@@ -4,6 +4,17 @@ import { NextResponse, type NextRequest } from "next/server";
 const PUBLIC_PATHS = ["/login", "/signup", "/auth", "/api/cuit"];
 
 export async function updateSession(request: NextRequest) {
+  // Bypass auth si la request trae un X-Sync-Token válido
+  // (usado por n8n y otros servicios externos para sincronizar al Sheet)
+  const syncToken = request.headers.get("x-sync-token");
+  if (
+    syncToken &&
+    process.env.SYNC_API_TOKEN &&
+    syncToken === process.env.SYNC_API_TOKEN
+  ) {
+    return NextResponse.next({ request });
+  }
+
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(
