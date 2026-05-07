@@ -28,6 +28,35 @@ function parseAfipDate(v?: string | null): string | null {
 const isNil = (v: unknown): boolean =>
   v == null || v === "" || v === "NULL";
 
+// Concurrency del sync. ARCA no documenta su rate limit; 10 anduvo en pruebas.
+const SYNC_CONCURRENCY = 10;
+const SYNC_CHUNK_SIZE = 50;
+
+/**
+ * Worker pool con concurrency limit. Mantiene los resultados en el orden
+ * de los inputs, no en el orden de finalización.
+ */
+async function parallelMap<T, R>(
+  items: T[],
+  worker: (item: T, index: number) => Promise<R>,
+  concurrency: number,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const runners = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    async () => {
+      while (true) {
+        const i = next++;
+        if (i >= items.length) return;
+        results[i] = await worker(items[i], i);
+      }
+    },
+  );
+  await Promise.all(runners);
+  return results;
+}
+
 type SyncOptions = {
   ptosVenta?: number[];     // si no se pasa, se autodescubre
   cbteTipos?: number[];     // si no se pasa, usa TIPOS_DEFAULT
@@ -219,61 +248,91 @@ export async function syncComprobantesEmitidos(
         const hasta = Math.min(ultimoAfip, desde + maxPorPunto - 1);
         if (desde > hasta) continue;
 
-        let ultimoOk = cp?.ultimo_nro_sincronizado ?? 0;
+        const checkpointInicial = cp?.ultimo_nro_sincronizado ?? 0;
+        let ultimoOk = checkpointInicial;
         let nuevosEnEsteParo = 0;
+        let detenido = false;
 
-        for (let nro = desde; nro <= hasta; nro++) {
-          const c: Comprobante | null = await feCompConsultar(ticket, cuit, ptoVta, cbteTipo, nro);
-          if (!c) continue;
+        // Procesa en chunks paralelos. Avanza el checkpoint solo hasta el
+        // último número CONSECUTIVO exitoso para no saltar errores intermedios.
+        for (let chunkStart = desde; chunkStart <= hasta && !detenido; chunkStart += SYNC_CHUNK_SIZE) {
+          const chunkEnd = Math.min(chunkStart + SYNC_CHUNK_SIZE - 1, hasta);
+          const numeros: number[] = [];
+          for (let n = chunkStart; n <= chunkEnd; n++) numeros.push(n);
 
-          const fechaCbte = parseAfipDate(c.CbteFch) ?? new Date().toISOString().slice(0, 10);
-          const caeVto = parseAfipDate(c.FchVto);
+          type ChunkResult =
+            | { nro: number; ok: true; counted: boolean }
+            | { nro: number; ok: false; error: string };
 
-          const row = {
-            user_id: userId,
-            cuit_emisor: cuitNum,
-            pto_vta: ptoVta,
-            cbte_tipo: cbteTipo,
-            cbte_nro: nro,
-            fecha_cbte: fechaCbte,
-            doc_tipo: c.DocTipo ?? null,
-            doc_nro: c.DocNro ?? null,
-            imp_total: Number(c.ImpTotal ?? 0),
-            imp_tot_conc: c.ImpTotConc != null ? Number(c.ImpTotConc) : null,
-            imp_neto: c.ImpNeto != null ? Number(c.ImpNeto) : null,
-            imp_op_ex: c.ImpOpEx != null ? Number(c.ImpOpEx) : null,
-            imp_iva: c.ImpIVA != null ? Number(c.ImpIVA) : null,
-            imp_trib: c.ImpTrib != null ? Number(c.ImpTrib) : null,
-            mon_id: c.MonId ?? null,
-            mon_cotiz: c.MonCotiz != null ? Number(c.MonCotiz) : null,
-            cae: String(c.CodAutorizacion ?? ""),
-            cae_vto: caeVto,
-            resultado: c.Resultado ?? null,
-            raw: c as unknown as object,
-            synced_at: new Date().toISOString(),
-          };
+          const resultados: ChunkResult[] = await parallelMap(
+            numeros,
+            async (nro): Promise<ChunkResult> => {
+              try {
+                const c: Comprobante | null = await feCompConsultar(ticket, cuit, ptoVta, cbteTipo, nro);
+                if (!c) return { nro, ok: true, counted: false };
 
-          const { error } = await supabase
-            .from("arca_comprobantes_emitidos")
-            .upsert(row, { onConflict: "user_id,pto_vta,cbte_tipo,cbte_nro" });
+                const fechaCbte = parseAfipDate(c.CbteFch) ?? new Date().toISOString().slice(0, 10);
+                const caeVto = parseAfipDate(c.FchVto);
 
-          if (error) {
-            result.errores.push(`PtoVta ${ptoVta} Tipo ${cbteTipo} Nro ${nro}: ${error.message}`);
-            continue;
+                const row = {
+                  user_id: userId,
+                  cuit_emisor: cuitNum,
+                  pto_vta: ptoVta,
+                  cbte_tipo: cbteTipo,
+                  cbte_nro: nro,
+                  fecha_cbte: fechaCbte,
+                  doc_tipo: c.DocTipo ?? null,
+                  doc_nro: c.DocNro ?? null,
+                  imp_total: Number(c.ImpTotal ?? 0),
+                  imp_tot_conc: c.ImpTotConc != null ? Number(c.ImpTotConc) : null,
+                  imp_neto: c.ImpNeto != null ? Number(c.ImpNeto) : null,
+                  imp_op_ex: c.ImpOpEx != null ? Number(c.ImpOpEx) : null,
+                  imp_iva: c.ImpIVA != null ? Number(c.ImpIVA) : null,
+                  imp_trib: c.ImpTrib != null ? Number(c.ImpTrib) : null,
+                  mon_id: c.MonId ?? null,
+                  mon_cotiz: c.MonCotiz != null ? Number(c.MonCotiz) : null,
+                  cae: String(c.CodAutorizacion ?? ""),
+                  cae_vto: caeVto,
+                  resultado: c.Resultado ?? null,
+                  raw: c as unknown as object,
+                  synced_at: new Date().toISOString(),
+                };
+
+                const { error } = await supabase
+                  .from("arca_comprobantes_emitidos")
+                  .upsert(row, { onConflict: "user_id,pto_vta,cbte_tipo,cbte_nro" });
+
+                if (error) return { nro, ok: false, error: error.message };
+                return { nro, ok: true, counted: true };
+              } catch (e) {
+                return { nro, ok: false, error: String(e) };
+              }
+            },
+            SYNC_CONCURRENCY,
+          );
+
+          // Avanzar checkpoint solo hasta el último consecutivo OK.
+          for (const r of resultados) {
+            if (r.ok) {
+              ultimoOk = r.nro;
+              if (r.counted) nuevosEnEsteParo += 1;
+            } else {
+              result.errores.push(`PtoVta ${ptoVta} Tipo ${cbteTipo} Nro ${r.nro}: ${r.error}`);
+              detenido = true;
+              break;
+            }
           }
 
-          ultimoOk = nro;
-          nuevosEnEsteParo += 1;
-        }
-
-        if (ultimoOk > (cp?.ultimo_nro_sincronizado ?? 0)) {
-          await supabase.from("arca_sync_checkpoint").upsert({
-            user_id: userId,
-            pto_vta: ptoVta,
-            cbte_tipo: cbteTipo,
-            ultimo_nro_sincronizado: ultimoOk,
-            updated_at: new Date().toISOString(),
-          });
+          // Persistir checkpoint después de cada chunk.
+          if (ultimoOk > checkpointInicial) {
+            await supabase.from("arca_sync_checkpoint").upsert({
+              user_id: userId,
+              pto_vta: ptoVta,
+              cbte_tipo: cbteTipo,
+              ultimo_nro_sincronizado: ultimoOk,
+              updated_at: new Date().toISOString(),
+            });
+          }
         }
 
         if (nuevosEnEsteParo > 0) {
