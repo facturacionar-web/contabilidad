@@ -14,7 +14,7 @@ export function formatMoney(amount: number, currency: CurrencyCode, locale = "es
   }
 }
 
-export function formatDate(date: string | Date, locale = "es-MX"): string {
+export function formatDate(date: string | Date, locale = "es-AR"): string {
   const d =
     typeof date === "string"
       ? /^\d{4}-\d{2}-\d{2}$/.test(date)
@@ -23,7 +23,7 @@ export function formatDate(date: string | Date, locale = "es-MX"): string {
       : date;
   return new Intl.DateTimeFormat(locale, {
     year: "numeric",
-    month: "short",
+    month: "2-digit",
     day: "2-digit",
   }).format(d);
 }
