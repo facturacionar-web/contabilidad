@@ -15,6 +15,17 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.next({ request });
   }
 
+  // Bypass auth para Authorization: Bearer <CRON_SECRET>
+  // (usado por jobs automatizados que llaman a /api/arca/*)
+  const authHeader = request.headers.get("authorization");
+  if (
+    authHeader?.startsWith("Bearer ") &&
+    process.env.CRON_SECRET &&
+    authHeader.slice(7).trim() === process.env.CRON_SECRET
+  ) {
+    return NextResponse.next({ request });
+  }
+
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(
