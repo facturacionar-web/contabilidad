@@ -226,7 +226,7 @@ export default function ArcaComprobantesPage() {
             type="date"
             value={desde}
             onChange={(e) => setDesde(e.target.value)}
-            className="w-full px-2 py-1.5 text-sm border border-[var(--border)] rounded-md"
+            className="input"
           />
         </div>
         <div>
@@ -235,7 +235,7 @@ export default function ArcaComprobantesPage() {
             type="date"
             value={hasta}
             onChange={(e) => setHasta(e.target.value)}
-            className="w-full px-2 py-1.5 text-sm border border-[var(--border)] rounded-md"
+            className="input"
           />
         </div>
         <div>
@@ -243,7 +243,7 @@ export default function ArcaComprobantesPage() {
           <select
             value={tipoFiltro}
             onChange={(e) => setTipoFiltro(e.target.value as Filtro)}
-            className="w-full px-2 py-1.5 text-sm border border-[var(--border)] rounded-md"
+            className="input"
           >
             <option value="todos">Todos</option>
             <option value="facturas">Facturas</option>
@@ -256,7 +256,7 @@ export default function ArcaComprobantesPage() {
           <select
             value={ptoVtaFiltro}
             onChange={(e) => setPtoVtaFiltro(e.target.value)}
-            className="w-full px-2 py-1.5 text-sm border border-[var(--border)] rounded-md"
+            className="input"
           >
             <option value="todos">Todos</option>
             {ptosVentaDisponibles.map((p) => (
@@ -273,7 +273,7 @@ export default function ArcaComprobantesPage() {
             value={docNroFiltro}
             onChange={(e) => setDocNroFiltro(e.target.value)}
             placeholder="Buscar..."
-            className="w-full px-2 py-1.5 text-sm border border-[var(--border)] rounded-md"
+            className="input"
           />
         </div>
       </div>
