@@ -23,6 +23,8 @@ import {
   Scale,
   FileText,
 } from "lucide-react";
+import { useConfig } from "@/lib/useConfig";
+import type { CountryCode } from "@/lib/countries";
 
 type SubItem = { href: string; label: string };
 type NavGroup = {
@@ -30,11 +32,13 @@ type NavGroup = {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   children: SubItem[];
+  paises?: CountryCode[]; // si está, solo se muestra cuando config.pais coincide
 };
 type NavLink = {
   href: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
+  paises?: CountryCode[];
 };
 
 const nav: (NavLink | NavGroup)[] = [
@@ -66,6 +70,7 @@ const nav: (NavLink | NavGroup)[] = [
     key: "arca",
     label: "ARCA",
     icon: FileText,
+    paises: ["AR"],
     children: [
       { href: "/arca/resumen-mensual", label: "Resumen mensual" },
       { href: "/arca/comprobantes", label: "Comprobantes emitidos" },
@@ -93,10 +98,16 @@ function isGroup(item: NavLink | NavGroup): item is NavGroup {
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const { config } = useConfig();
+  const paisActivo = config?.pais as CountryCode | undefined;
+
+  const visibleNav = nav.filter(
+    (item) => !item.paises || (paisActivo && item.paises.includes(paisActivo)),
+  );
 
   // Auto-expand groups based on current path
   const initialOpen: Record<string, boolean> = {};
-  for (const item of nav) {
+  for (const item of visibleNav) {
     if (isGroup(item)) {
       initialOpen[item.key] = item.children.some((c) =>
         pathname.startsWith(c.href)
@@ -109,7 +120,7 @@ export default function Sidebar() {
   useEffect(() => {
     setOpen((prev) => {
       const next = { ...prev };
-      for (const item of nav) {
+      for (const item of visibleNav) {
         if (isGroup(item)) {
           if (item.children.some((c) => pathname.startsWith(c.href))) {
             next[item.key] = true;
@@ -118,7 +129,7 @@ export default function Sidebar() {
       }
       return next;
     });
-  }, [pathname]);
+  }, [pathname, visibleNav]);
 
   const toggle = (key: string) =>
     setOpen((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -138,7 +149,7 @@ export default function Sidebar() {
       </div>
 
       <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
-        {nav.map((item) => {
+        {visibleNav.map((item) => {
           if (!isGroup(item)) {
             const active =
               item.href === "/"
