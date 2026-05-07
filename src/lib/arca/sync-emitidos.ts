@@ -15,9 +15,13 @@ const TIPOS_DEFAULT = [1, 2, 3, 6, 7, 8, 11, 12, 13, 19, 20, 21, 51, 52, 53, 81,
 function parseAfipDate(v?: string | null): string | null {
   if (!v) return null;
   const s = String(v);
-  if (s.length !== 8) return null;
+  if (s === "NULL" || s.length !== 8) return null;
   return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
 }
+
+// fast-xml-parser convierte campos xsi:nil="true" en string "NULL".
+const isNil = (v: unknown): boolean =>
+  v == null || v === "" || v === "NULL";
 
 type SyncOptions = {
   ptosVenta?: number[];     // si no se pasa, se autodescubre
@@ -49,7 +53,7 @@ export async function syncComprobantesEmitidos(
   if (!ptosVenta) {
     const all = await feParamGetPtosVenta(ticket, cuit);
     ptosVenta = all
-      .filter((p) => p.Bloqueado !== "S" && !p.FchBaja)
+      .filter((p) => p.Bloqueado !== "S" && isNil(p.FchBaja))
       .map((p) => Number(p.Nro));
   }
   if (ptosVenta.length === 0) {
