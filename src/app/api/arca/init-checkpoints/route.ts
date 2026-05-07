@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { resolveAuth } from "@/lib/arca/auth";
 import { initCheckpointsDesdeFecha } from "@/lib/arca/sync-emitidos";
 
 export const dynamic = "force-dynamic";
@@ -13,12 +13,11 @@ export const maxDuration = 300;
  * cada (PtoVta, Tipo). Después el sync solo trae lo nuevo desde esa fecha.
  */
 export async function POST(req: NextRequest) {
-  const supabase = await createClient();
-  const { data: userRes } = await supabase.auth.getUser();
-  const user = userRes?.user;
-  if (!user) {
-    return NextResponse.json({ ok: false, error: "no autenticado" }, { status: 401 });
+  const auth = await resolveAuth(req);
+  if (!auth.ok) {
+    return NextResponse.json({ ok: false, error: auth.error }, { status: auth.status });
   }
+  const { supabase, userId } = auth;
 
   let body: { fechaDesde?: string; ptosVenta?: number[]; cbteTipos?: number[] } = {};
   try {
@@ -36,11 +35,11 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await initCheckpointsDesdeFecha(supabase, user.id, body.fechaDesde, {
+    const result = await initCheckpointsDesdeFecha(supabase, userId, body.fechaDesde, {
       ptosVenta: body.ptosVenta,
       cbteTipos: body.cbteTipos,
     });
-    return NextResponse.json({ ok: true, ...result });
+    return NextResponse.json({ ok: true, via: auth.via, ...result });
   } catch (err) {
     const msg = String(err);
     console.error("[arca/init-checkpoints] ERROR:", msg);
