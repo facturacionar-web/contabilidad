@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   LayoutDashboard,
   Users,
@@ -101,8 +101,12 @@ export default function Sidebar() {
   const { config } = useConfig();
   const paisActivo = config?.pais as CountryCode | undefined;
 
-  const visibleNav = nav.filter(
-    (item) => !item.paises || (paisActivo && item.paises.includes(paisActivo)),
+  const visibleNav = useMemo(
+    () =>
+      nav.filter(
+        (item) => !item.paises || (paisActivo && item.paises.includes(paisActivo)),
+      ),
+    [paisActivo],
   );
 
   // Auto-expand groups based on current path
