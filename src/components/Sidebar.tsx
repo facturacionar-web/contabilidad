@@ -21,6 +21,7 @@ import {
   Trash2,
   History,
   Scale,
+  FileText,
 } from "lucide-react";
 
 type SubItem = { href: string; label: string };
@@ -61,6 +62,15 @@ const nav: (NavLink | NavGroup)[] = [
   { href: "/conceptos", label: "Conceptos", icon: Layers },
   { href: "/cuentas", label: "Cuentas", icon: Building2 },
   { href: "/conciliacion", label: "Conciliación", icon: Scale },
+  {
+    key: "arca",
+    label: "ARCA",
+    icon: FileText,
+    children: [
+      { href: "/arca/resumen-mensual", label: "Resumen mensual" },
+      { href: "/arca/comprobantes", label: "Comprobantes emitidos" },
+    ],
+  },
   { href: "/proveedores", label: "Gastos por proveedor", icon: Package },
   {
     key: "reportes",
