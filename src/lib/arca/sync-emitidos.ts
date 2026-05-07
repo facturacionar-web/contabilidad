@@ -29,6 +29,137 @@ type SyncOptions = {
   maxPorPunto?: number;     // límite de comprobantes a traer por (PtoVta, TipoCbte) en cada corrida
 };
 
+/**
+ * Compara fechas formato YYYYMMDD (string) lexicográficamente — funciona
+ * porque YYYY-padded MM y DD ordenan igual que numéricamente.
+ */
+function fchGte(a?: string | null, b?: string | null): boolean {
+  if (!a || a === "NULL") return false;
+  if (!b || b === "NULL") return true;
+  return String(a) >= String(b);
+}
+
+/**
+ * Binary search: busca el primer cbte_nro con CbteFch >= fechaDesde.
+ * Devuelve null si no hay ningún comprobante posterior a la fecha.
+ * Hace ~log2(ultimoAfip) llamadas a FECompConsultar.
+ */
+async function findFirstCbteNroSinceDate(
+  ticket: { token: string; sign: string; expiraAt: Date },
+  cuit: string,
+  ptoVta: number,
+  cbteTipo: number,
+  fechaDesdeYYYYMMDD: string,
+  ultimoAfip: number,
+): Promise<number | null> {
+  if (ultimoAfip <= 0) return null;
+
+  // Si el último ya es anterior a la fecha → no hay nada relevante
+  const ultimo = await feCompConsultar(ticket, cuit, ptoVta, cbteTipo, ultimoAfip);
+  if (!ultimo || !fchGte(ultimo.CbteFch, fechaDesdeYYYYMMDD)) return null;
+
+  // Si el primero ya cumple → traer desde 1
+  const primero = await feCompConsultar(ticket, cuit, ptoVta, cbteTipo, 1);
+  if (primero && fchGte(primero.CbteFch, fechaDesdeYYYYMMDD)) return 1;
+
+  // Binary search: invariante lo.fecha < fechaDesde, hi.fecha >= fechaDesde
+  let lo = 1;
+  let hi = ultimoAfip;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const c = await feCompConsultar(ticket, cuit, ptoVta, cbteTipo, mid);
+    if (c && fchGte(c.CbteFch, fechaDesdeYYYYMMDD)) {
+      hi = mid;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  return lo;
+}
+
+export type InitCheckpointsResult = {
+  inicializadas: Array<{ ptoVta: number; cbteTipo: number; primerNuevoNro: number; ultimoAfip: number }>;
+  saltadas: Array<{ ptoVta: number; cbteTipo: number; razon: string; ultimoAfip?: number }>;
+  errores: string[];
+};
+
+/**
+ * Inicializa checkpoints para que la próxima corrida del sync solo traiga
+ * comprobantes con fecha >= fechaDesde.
+ *
+ * Para cada (PtoVta, Tipo):
+ * - Busca el primer cbte_nro cuyo CbteFch >= fechaDesde (binary search)
+ * - Setea ultimo_nro_sincronizado = (primerNuevoNro - 1)
+ * - Si no hay ninguno relevante (todos viejos), setea ultimo_nro_sincronizado = ultimoAfip
+ *   para que sync no haga nada y empiece a traer recién cuando se emitan nuevos
+ */
+export async function initCheckpointsDesdeFecha(
+  supabase: SupabaseClient,
+  userId: string,
+  fechaDesde: string,                  // formato YYYY-MM-DD
+  options: { ptosVenta?: number[]; cbteTipos?: number[] } = {}
+): Promise<InitCheckpointsResult> {
+  const { cuit } = getCredentials();
+  const ticket = await getAccessTicket(supabase, userId, "wsfe");
+
+  const fechaYYYYMMDD = fechaDesde.replaceAll("-", "");
+  if (fechaYYYYMMDD.length !== 8 || !/^\d+$/.test(fechaYYYYMMDD)) {
+    throw new Error(`fechaDesde inválida: ${fechaDesde}. Formato esperado YYYY-MM-DD.`);
+  }
+
+  let ptosVenta = options.ptosVenta;
+  if (!ptosVenta) {
+    const all = await feParamGetPtosVenta(ticket, cuit);
+    ptosVenta = all
+      .filter((p) => p.Bloqueado !== "S" && isNil(p.FchBaja))
+      .map((p) => Number(p.Nro));
+  }
+
+  const cbteTipos = options.cbteTipos ?? TIPOS_DEFAULT;
+  const result: InitCheckpointsResult = { inicializadas: [], saltadas: [], errores: [] };
+
+  for (const ptoVta of ptosVenta) {
+    for (const cbteTipo of cbteTipos) {
+      try {
+        const ultimoAfip = await feCompUltimoAutorizado(ticket, cuit, ptoVta, cbteTipo);
+        if (ultimoAfip <= 0) {
+          result.saltadas.push({ ptoVta, cbteTipo, razon: "no hay comprobantes emitidos", ultimoAfip });
+          continue;
+        }
+
+        const primerNuevoNro = await findFirstCbteNroSinceDate(
+          ticket, cuit, ptoVta, cbteTipo, fechaYYYYMMDD, ultimoAfip
+        );
+
+        if (primerNuevoNro === null) {
+          // Todos los comprobantes son anteriores → checkpoint = ultimoAfip
+          await supabase.from("arca_sync_checkpoint").upsert({
+            user_id: userId,
+            pto_vta: ptoVta,
+            cbte_tipo: cbteTipo,
+            ultimo_nro_sincronizado: ultimoAfip,
+            updated_at: new Date().toISOString(),
+          });
+          result.saltadas.push({ ptoVta, cbteTipo, razon: "todos los comprobantes son anteriores a la fecha", ultimoAfip });
+        } else {
+          await supabase.from("arca_sync_checkpoint").upsert({
+            user_id: userId,
+            pto_vta: ptoVta,
+            cbte_tipo: cbteTipo,
+            ultimo_nro_sincronizado: primerNuevoNro - 1,
+            updated_at: new Date().toISOString(),
+          });
+          result.inicializadas.push({ ptoVta, cbteTipo, primerNuevoNro, ultimoAfip });
+        }
+      } catch (err) {
+        result.errores.push(`PtoVta ${ptoVta} Tipo ${cbteTipo}: ${String(err)}`);
+      }
+    }
+  }
+
+  return result;
+}
+
 export type SyncResult = {
   comprobantesNuevos: number;
   porTipo: Record<string, number>;
