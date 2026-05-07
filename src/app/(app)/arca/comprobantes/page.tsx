@@ -1,10 +1,10 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { formatMoney, formatDate } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
-import { Loader2, Download } from "lucide-react";
+import { Loader2, Download, RefreshCw, CheckCircle2, AlertTriangle } from "lucide-react";
 import {
   TIPO_FACTURAS,
   TIPO_NOTAS_DEBITO,
@@ -57,45 +57,67 @@ export default function ArcaComprobantesPage() {
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 50;
 
-  useEffect(() => {
-    let cancelled = false;
+  type SyncStatus =
+    | { state: "idle" }
+    | { state: "running" }
+    | { state: "ok"; nuevos: number }
+    | { state: "error"; msg: string };
+  const [sync, setSync] = useState<SyncStatus>({ state: "idle" });
+
+  const loadRows = useCallback(async () => {
     const supabase = createClient();
-    setRows(null);
     setError(null);
-    setPage(0);
+    const all: Cbte[] = [];
+    const pageSize = 1000;
+    let from = 0;
+    while (true) {
+      const { data, error: err } = await supabase
+        .from("arca_comprobantes_emitidos")
+        .select("id, fecha_cbte, pto_vta, cbte_tipo, cbte_nro, doc_tipo, doc_nro, imp_total, imp_neto, imp_iva, cae, resultado")
+        .in("cbte_tipo", TIPOS_RELEVANTES as unknown as number[])
+        .gte("fecha_cbte", desde)
+        .lte("fecha_cbte", hasta)
+        .order("fecha_cbte", { ascending: false })
+        .order("cbte_nro", { ascending: false })
+        .range(from, from + pageSize - 1);
 
-    async function load() {
-      const all: Cbte[] = [];
-      const pageSize = 1000;
-      let from = 0;
-      while (true) {
-        const { data, error: err } = await supabase
-          .from("arca_comprobantes_emitidos")
-          .select("id, fecha_cbte, pto_vta, cbte_tipo, cbte_nro, doc_tipo, doc_nro, imp_total, imp_neto, imp_iva, cae, resultado")
-          .in("cbte_tipo", TIPOS_RELEVANTES as unknown as number[])
-          .gte("fecha_cbte", desde)
-          .lte("fecha_cbte", hasta)
-          .order("fecha_cbte", { ascending: false })
-          .order("cbte_nro", { ascending: false })
-          .range(from, from + pageSize - 1);
-
-        if (err) {
-          if (!cancelled) setError(err.message);
-          return;
-        }
-        if (!data || data.length === 0) break;
-        all.push(...(data as Cbte[]));
-        if (data.length < pageSize) break;
-        from += pageSize;
+      if (err) {
+        setError(err.message);
+        return;
       }
-      if (!cancelled) setRows(all);
+      if (!data || data.length === 0) break;
+      all.push(...(data as Cbte[]));
+      if (data.length < pageSize) break;
+      from += pageSize;
     }
-
-    load();
-    return () => {
-      cancelled = true;
-    };
+    setRows(all);
   }, [desde, hasta]);
+
+  useEffect(() => {
+    setRows(null);
+    setPage(0);
+    loadRows();
+  }, [loadRows]);
+
+  async function handleSync() {
+    setSync({ state: "running" });
+    try {
+      const r = await fetch("/api/arca/sync-emitidos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ maxPorPunto: 200 }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) {
+        setSync({ state: "error", msg: j.error ?? `HTTP ${r.status}` });
+        return;
+      }
+      setSync({ state: "ok", nuevos: j.comprobantesNuevos ?? 0 });
+      await loadRows();
+    } catch (e) {
+      setSync({ state: "error", msg: String(e) });
+    }
+  }
 
   const ptosVentaDisponibles = useMemo(() => {
     if (!rows) return [] as number[];
@@ -156,15 +178,45 @@ export default function ArcaComprobantesPage() {
         title="ARCA — Comprobantes emitidos"
         description="Detalle de cada comprobante sincronizado desde ARCA. Filtrá por fecha, punto de venta, tipo o CUIT del receptor."
         action={
-          <button
-            onClick={exportExcel}
-            disabled={!rows || filtrados.length === 0}
-            className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-[var(--border)] hover:bg-slate-50 disabled:opacity-50"
-          >
-            <Download className="w-4 h-4" /> Exportar Excel
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={handleSync}
+              disabled={sync.state === "running"}
+              className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-[var(--border)] bg-white hover:bg-slate-50 disabled:opacity-50"
+            >
+              {sync.state === "running" ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              {sync.state === "running" ? "Actualizando…" : "Actualizar"}
+            </button>
+            <button
+              onClick={exportExcel}
+              disabled={!rows || filtrados.length === 0}
+              className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-[var(--border)] hover:bg-slate-50 disabled:opacity-50"
+            >
+              <Download className="w-4 h-4" /> Exportar Excel
+            </button>
+          </div>
         }
       />
+
+      {sync.state === "ok" && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 mb-4 flex items-center gap-2 text-sm text-emerald-700">
+          <CheckCircle2 className="w-4 h-4 shrink-0" />
+          {sync.nuevos === 0
+            ? "Ya estás al día. No hay comprobantes nuevos."
+            : `${sync.nuevos} comprobante${sync.nuevos === 1 ? "" : "s"} nuevo${sync.nuevos === 1 ? "" : "s"} sincronizado${sync.nuevos === 1 ? "" : "s"}.`}
+        </div>
+      )}
+
+      {sync.state === "error" && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 mb-4 flex items-start gap-2 text-sm text-red-700">
+          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+          <div>Error al sincronizar: {sync.msg}</div>
+        </div>
+      )}
 
       {/* Filtros */}
       <div className="rounded-lg border border-[var(--border)] bg-white p-4 mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">

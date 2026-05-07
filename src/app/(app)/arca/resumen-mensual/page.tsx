@@ -1,10 +1,10 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { formatMoney } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
-import { Loader2, ExternalLink, Info } from "lucide-react";
+import { Loader2, ExternalLink, Info, RefreshCw, CheckCircle2, AlertTriangle } from "lucide-react";
 import {
   TIPO_FACTURAS,
   TIPO_NOTAS_DEBITO,
@@ -41,44 +41,65 @@ function nombreMes(yyyymm: string): string {
   return `${meses[idx] ?? m} ${y}`;
 }
 
+type SyncStatus =
+  | { state: "idle" }
+  | { state: "running" }
+  | { state: "ok"; nuevos: number; ts: number }
+  | { state: "error"; msg: string };
+
 export default function ResumenMensualArcaPage() {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sync, setSync] = useState<SyncStatus>({ state: "idle" });
+
+  const loadRows = useCallback(async () => {
+    const supabase = createClient();
+    const all: Row[] = [];
+    const pageSize = 1000;
+    let from = 0;
+    while (true) {
+      const { data, error: err } = await supabase
+        .from("arca_comprobantes_emitidos")
+        .select("fecha_cbte, cbte_tipo, imp_total")
+        .in("cbte_tipo", TIPOS_RELEVANTES as unknown as number[])
+        .order("fecha_cbte", { ascending: false })
+        .range(from, from + pageSize - 1);
+
+      if (err) {
+        setError(err.message);
+        return;
+      }
+      if (!data || data.length === 0) break;
+      all.push(...(data as Row[]));
+      if (data.length < pageSize) break;
+      from += pageSize;
+    }
+    setRows(all);
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    const supabase = createClient();
+    loadRows();
+  }, [loadRows]);
 
-    async function load() {
-      // Paginar de a 1000 para superar el cap default de Supabase
-      const all: Row[] = [];
-      const pageSize = 1000;
-      let from = 0;
-      while (true) {
-        const { data, error: err } = await supabase
-          .from("arca_comprobantes_emitidos")
-          .select("fecha_cbte, cbte_tipo, imp_total")
-          .in("cbte_tipo", TIPOS_RELEVANTES as unknown as number[])
-          .order("fecha_cbte", { ascending: false })
-          .range(from, from + pageSize - 1);
-
-        if (err) {
-          if (!cancelled) setError(err.message);
-          return;
-        }
-        if (!data || data.length === 0) break;
-        all.push(...(data as Row[]));
-        if (data.length < pageSize) break;
-        from += pageSize;
+  async function handleSync() {
+    setSync({ state: "running" });
+    try {
+      const r = await fetch("/api/arca/sync-emitidos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ maxPorPunto: 200 }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) {
+        setSync({ state: "error", msg: j.error ?? `HTTP ${r.status}` });
+        return;
       }
-      if (!cancelled) setRows(all);
+      setSync({ state: "ok", nuevos: j.comprobantesNuevos ?? 0, ts: Date.now() });
+      await loadRows();
+    } catch (e) {
+      setSync({ state: "error", msg: String(e) });
     }
-
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  }
 
   const resumen: ResumenMes[] = useMemo(() => {
     if (!rows) return [];
@@ -130,14 +151,45 @@ export default function ResumenMensualArcaPage() {
       <PageHeader
         title="ARCA — Resumen mensual"
         description="Total facturado por mes según comprobantes emitidos en ARCA. Total = Facturas + Notas de Débito − Notas de Crédito."
+        action={
+          <button
+            onClick={handleSync}
+            disabled={sync.state === "running"}
+            className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-[var(--border)] bg-white hover:bg-slate-50 disabled:opacity-50"
+          >
+            {sync.state === "running" ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4" />
+            )}
+            {sync.state === "running" ? "Actualizando…" : "Actualizar ahora"}
+          </button>
+        }
       />
+
+      {sync.state === "ok" && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 mb-4 flex items-center gap-2 text-sm text-emerald-700">
+          <CheckCircle2 className="w-4 h-4 shrink-0" />
+          {sync.nuevos === 0
+            ? "Ya estás al día. No hay comprobantes nuevos."
+            : `${sync.nuevos} comprobante${sync.nuevos === 1 ? "" : "s"} nuevo${sync.nuevos === 1 ? "" : "s"} sincronizado${sync.nuevos === 1 ? "" : "s"}.`}
+        </div>
+      )}
+
+      {sync.state === "error" && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 mb-4 flex items-start gap-2 text-sm text-red-700">
+          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+          <div>Error al sincronizar: {sync.msg}</div>
+        </div>
+      )}
 
       <div className="rounded-lg border border-[var(--border)] bg-[var(--accent)]/40 p-3 mb-4 flex items-start gap-2 text-sm text-slate-600">
         <Info className="w-4 h-4 mt-0.5 shrink-0 text-[var(--primary)]" />
         <div>
-          La conciliación con Mercado Libre se sumará a esta tabla cuando esté
-          disponible la otra base de datos. La tolerancia objetivo es
-          ±1-2% de diferencia entre el total ARCA y el total ML por mes.
+          Sincronización automática cada 5 horas. Para forzar una actualización
+          inmediata, usá el botón de arriba. La conciliación con Mercado Libre
+          se sumará cuando esté disponible la otra base de datos (tolerancia
+          objetivo: ±1-2%).
         </div>
       </div>
 
