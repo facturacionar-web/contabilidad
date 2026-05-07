@@ -10,7 +10,12 @@ import {
 
 // Tipos de comprobante "habituales" — se puede sobreescribir vía opciones.
 // Lista completa: FEParamGetTiposCbte. Acá los más comunes para emisión.
-const TIPOS_DEFAULT = [1, 2, 3, 6, 7, 8, 11, 12, 13, 19, 20, 21, 51, 52, 53, 81, 82, 83];
+const TIPOS_DEFAULT = [
+  1, 2, 3,    // Factura/ND/NC A
+  6, 7, 8,    // Factura/ND/NC B
+  11, 12, 13, // Factura/ND/NC C
+  51, 52, 53, // Factura/ND/NC A con leyenda "Operación Sujeta a Retención"
+];
 
 function parseAfipDate(v?: string | null): string | null {
   if (!v) return null;
