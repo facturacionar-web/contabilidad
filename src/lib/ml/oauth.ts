@@ -90,19 +90,22 @@ export async function saveTokens(
   supabase: SupabaseClient,
   userId: string,
   tokens: MlTokens,
+  nickname?: string,
 ): Promise<void> {
-  const { error } = await supabase.from("ml_oauth_cache").upsert(
-    {
-      user_id: userId,
-      ml_user_id: tokens.mlUserId,
-      access_token: tokens.accessToken,
-      refresh_token: tokens.refreshToken,
-      expira_at: tokens.expiraAt.toISOString(),
-      scope: tokens.scope ?? null,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "user_id,ml_user_id" },
-  );
+  const row: Record<string, unknown> = {
+    user_id: userId,
+    ml_user_id: tokens.mlUserId,
+    access_token: tokens.accessToken,
+    refresh_token: tokens.refreshToken,
+    expira_at: tokens.expiraAt.toISOString(),
+    scope: tokens.scope ?? null,
+    updated_at: new Date().toISOString(),
+  };
+  if (nickname) row.nickname = nickname;
+
+  const { error } = await supabase
+    .from("ml_oauth_cache")
+    .upsert(row, { onConflict: "user_id,ml_user_id" });
   if (error) {
     throw new Error(`No se pudo guardar tokens ML: ${error.message}`);
   }
@@ -111,6 +114,8 @@ export async function saveTokens(
 /**
  * Devuelve un access_token válido para el seller indicado. Si está vencido o
  * cerca de vencer, lo refresca automáticamente y persiste el nuevo refresh.
+ *
+ * Como side-effect: si el nickname está vacío, lo trae con /users/me y lo guarda.
  */
 export async function getAccessToken(
   supabase: SupabaseClient,
@@ -119,7 +124,7 @@ export async function getAccessToken(
 ): Promise<string> {
   const { data, error } = await supabase
     .from("ml_oauth_cache")
-    .select("access_token, refresh_token, expira_at")
+    .select("access_token, refresh_token, expira_at, nickname")
     .eq("user_id", userId)
     .eq("ml_user_id", mlUserId)
     .maybeSingle();
@@ -131,14 +136,37 @@ export async function getAccessToken(
     );
   }
 
-  const margin = 5 * 60 * 1000; // refresh 5 min antes de expirar
-  if (new Date(data.expira_at).getTime() > Date.now() + margin) {
-    return data.access_token;
+  const margin = 5 * 60 * 1000;
+  let accessToken = data.access_token;
+  if (new Date(data.expira_at).getTime() <= Date.now() + margin) {
+    const refreshed = await refreshAccessToken(data.refresh_token);
+    await saveTokens(supabase, userId, refreshed, data.nickname ?? undefined);
+    accessToken = refreshed.accessToken;
   }
 
-  const refreshed = await refreshAccessToken(data.refresh_token);
-  await saveTokens(supabase, userId, refreshed);
-  return refreshed.accessToken;
+  // Si el nickname todavía no se guardó, traerlo y persistir.
+  if (!data.nickname) {
+    try {
+      const { ML_API_BASE } = await import("./config");
+      const meRes = await fetch(`${ML_API_BASE}/users/me`, {
+        headers: { Accept: "application/json", Authorization: `Bearer ${accessToken}` },
+      });
+      if (meRes.ok) {
+        const me = (await meRes.json()) as { nickname?: string };
+        if (me.nickname) {
+          await supabase
+            .from("ml_oauth_cache")
+            .update({ nickname: me.nickname, updated_at: new Date().toISOString() })
+            .eq("user_id", userId)
+            .eq("ml_user_id", mlUserId);
+        }
+      }
+    } catch {
+      // no crítico, seguimos sin nickname
+    }
+  }
+
+  return accessToken;
 }
 
 /**

@@ -6,24 +6,17 @@ import PageHeader from "@/components/PageHeader";
 import { Loader2, RefreshCw, CheckCircle2, AlertTriangle, Info, ExternalLink } from "lucide-react";
 import Link from "next/link";
 
-type Row = {
-  mes: string;
-  total_arca: number | string | null;
-  total_ml: number | string | null;
-  diferencia: number | string | null;
-  diferencia_pct: number | string | null;
-  cant_arca: number | null;
-  cant_ml: number | null;
-};
+type Seller = { seller_id: number; seller_label: string };
 
 type ConciliacionMes = {
   mes: string;
   totalArca: number;
-  totalMl: number;
+  totalMl: number;            // suma de los sellers
+  porSeller: Record<string, number>;  // seller_id → total
   diferencia: number;
   diferenciaPct: number | null;
   cantArca: number;
-  cantMl: number;
+  cantMlPorSeller: Record<string, number>;
 };
 
 type SyncStatus =
@@ -32,7 +25,7 @@ type SyncStatus =
   | { state: "ok"; ordenesNuevas: number }
   | { state: "error"; msg: string };
 
-const TOLERANCIA_OK = 2; // % máximo aceptable
+const TOLERANCIA_OK = 2;
 
 function nombreMes(yyyymm: string): string {
   const [y, m] = yyyymm.split("-");
@@ -54,46 +47,58 @@ function classByDiff(pct: number | null): string {
 
 export default function ConciliacionMlPage() {
   const [data, setData] = useState<ConciliacionMes[] | null>(null);
+  const [sellers, setSellers] = useState<Seller[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [sync, setSync] = useState<SyncStatus>({ state: "idle" });
 
   const load = useCallback(async () => {
     const supabase = createClient();
-    // Hacemos las 2 queries en paralelo y unimos en cliente. Es mucho más rápido
-    // que pegarle a la VIEW arca_vs_ml_mensual_v (que hace FULL OUTER JOIN sobre
-    // ~190k filas y suele timeout-ear en Supabase).
-    const [arcaRes, mlRes] = await Promise.all([
+
+    const [arcaRes, mlSellerRes, sellersRes] = await Promise.all([
       supabase
         .from("arca_resumen_mensual_v")
         .select("mes, facturas, notas_debito, notas_credito, cantidad"),
       supabase
-        .from("ml_resumen_mensual_v")
-        .select("mes, total_ml, cantidad"),
+        .from("ml_resumen_mensual_seller_v")
+        .select("mes, ml_seller_id, seller_label, total_ml, cantidad"),
+      supabase
+        .from("ml_sellers_v")
+        .select("seller_id, seller_label"),
     ]);
 
-    if (arcaRes.error) {
-      setError(`ARCA: ${arcaRes.error.message}`);
-      return;
-    }
-    if (mlRes.error) {
-      setError(`ML: ${mlRes.error.message}`);
-      return;
-    }
+    if (arcaRes.error) { setError(`ARCA: ${arcaRes.error.message}`); return; }
+    if (mlSellerRes.error) { setError(`ML: ${mlSellerRes.error.message}`); return; }
+    if (sellersRes.error) { setError(`Sellers: ${sellersRes.error.message}`); return; }
 
+    setSellers((sellersRes.data ?? []) as Seller[]);
+
+    // ARCA: total por mes
     const arcaByMes = new Map<string, { totalArca: number; cantArca: number }>();
     for (const r of arcaRes.data ?? []) {
       const fac = Number((r as { facturas?: number | string | null }).facturas ?? 0);
       const nd = Number((r as { notas_debito?: number | string | null }).notas_debito ?? 0);
       const nc = Number((r as { notas_credito?: number | string | null }).notas_credito ?? 0);
-      arcaByMes.set(r.mes, { totalArca: fac + nd - nc, cantArca: Number((r as { cantidad?: number | null }).cantidad ?? 0) });
+      arcaByMes.set(r.mes, {
+        totalArca: fac + nd - nc,
+        cantArca: Number((r as { cantidad?: number | null }).cantidad ?? 0),
+      });
     }
 
-    const mlByMes = new Map<string, { totalMl: number; cantMl: number }>();
-    for (const r of mlRes.data ?? []) {
-      mlByMes.set(r.mes, {
-        totalMl: Number((r as { total_ml?: number | string | null }).total_ml ?? 0),
-        cantMl: Number((r as { cantidad?: number | null }).cantidad ?? 0),
-      });
+    // ML: por mes y seller
+    const mlByMes = new Map<string, { totalMl: number; porSeller: Record<string, number>; cantMlPorSeller: Record<string, number> }>();
+    for (const r of mlSellerRes.data ?? []) {
+      const row = r as { mes: string; ml_seller_id: number | string; total_ml: number | string | null; cantidad: number | null };
+      const sellerId = String(row.ml_seller_id);
+      const monto = Number(row.total_ml ?? 0);
+      const cant = Number(row.cantidad ?? 0);
+      let acc = mlByMes.get(row.mes);
+      if (!acc) {
+        acc = { totalMl: 0, porSeller: {}, cantMlPorSeller: {} };
+        mlByMes.set(row.mes, acc);
+      }
+      acc.totalMl += monto;
+      acc.porSeller[sellerId] = monto;
+      acc.cantMlPorSeller[sellerId] = cant;
     }
 
     const meses = new Set<string>([...arcaByMes.keys(), ...mlByMes.keys()]);
@@ -101,17 +106,18 @@ export default function ConciliacionMlPage() {
       .sort((a, b) => b.localeCompare(a))
       .map((mes) => {
         const a = arcaByMes.get(mes) ?? { totalArca: 0, cantArca: 0 };
-        const m = mlByMes.get(mes) ?? { totalMl: 0, cantMl: 0 };
+        const m = mlByMes.get(mes) ?? { totalMl: 0, porSeller: {}, cantMlPorSeller: {} };
         const diferencia = a.totalArca - m.totalMl;
         const diferenciaPct = m.totalMl === 0 ? null : (diferencia / m.totalMl) * 100;
         return {
           mes,
           totalArca: a.totalArca,
           totalMl: m.totalMl,
+          porSeller: m.porSeller,
           diferencia,
           diferenciaPct,
           cantArca: a.cantArca,
-          cantMl: m.cantMl,
+          cantMlPorSeller: m.cantMlPorSeller,
         };
       });
     setData(merged);
@@ -142,15 +148,17 @@ export default function ConciliacionMlPage() {
   }
 
   const totales = useMemo(() => {
-    if (!data) return { arca: 0, ml: 0, diff: 0 };
-    return data.reduce(
-      (acc, r) => ({
-        arca: acc.arca + r.totalArca,
-        ml: acc.ml + r.totalMl,
-        diff: acc.diff + r.diferencia,
-      }),
-      { arca: 0, ml: 0, diff: 0 },
-    );
+    if (!data) return { arca: 0, ml: 0, diff: 0, porSeller: {} as Record<string, number> };
+    const acc = { arca: 0, ml: 0, diff: 0, porSeller: {} as Record<string, number> };
+    for (const r of data) {
+      acc.arca += r.totalArca;
+      acc.ml += r.totalMl;
+      acc.diff += r.diferencia;
+      for (const [k, v] of Object.entries(r.porSeller)) {
+        acc.porSeller[k] = (acc.porSeller[k] ?? 0) + v;
+      }
+    }
+    return acc;
   }, [data]);
 
   const totalDiffPct = totales.ml === 0 ? null : (totales.diff / totales.ml) * 100;
@@ -159,7 +167,7 @@ export default function ConciliacionMlPage() {
     <div>
       <PageHeader
         title="Conciliación ARCA vs Mercado Libre"
-        description="Comparación mes a mes. Total ARCA = Facturas + ND − NC. Total ML = total_amount de órdenes pagadas (incluye envío que pagó el comprador)."
+        description="Comparación mes a mes. Total ARCA = Facturas + ND − NC. Total ML = paid_amount de órdenes pagadas (incluye envío del comprador), agrupado por fecha de cierre."
         action={
           <button
             onClick={handleSync}
@@ -191,8 +199,8 @@ export default function ConciliacionMlPage() {
       <div className="rounded-lg border border-[var(--border)] bg-[var(--accent)]/40 p-3 mb-4 flex items-start gap-2 text-sm text-slate-600">
         <Info className="w-4 h-4 mt-0.5 shrink-0 text-[var(--primary)]" />
         <div>
-          Tolerancia objetivo: <strong>±{TOLERANCIA_OK}%</strong>. Verde = dentro de tolerancia; amarillo = ±2-5% (revisar);
-          rojo = &gt;5% (revisar urgente).
+          Tolerancia objetivo: <strong>±{TOLERANCIA_OK}%</strong>. Verde = dentro de tolerancia; amarillo = ±2-5%;
+          rojo = &gt;5%.
         </div>
       </div>
 
@@ -215,16 +223,20 @@ export default function ConciliacionMlPage() {
       )}
 
       {data && data.length > 0 && (
-        <div className="rounded-lg border border-[var(--border)] bg-white overflow-hidden">
+        <div className="rounded-lg border border-[var(--border)] bg-white overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-slate-600">
               <tr>
                 <th className="text-left font-medium px-4 py-2">Mes</th>
                 <th className="text-right font-medium px-4 py-2">Total ARCA</th>
+                {sellers.map((s) => (
+                  <th key={s.seller_id} className="text-right font-medium px-4 py-2 text-xs">
+                    {s.seller_label}
+                  </th>
+                ))}
                 <th className="text-right font-medium px-4 py-2">Total ML</th>
                 <th className="text-right font-medium px-4 py-2">Diferencia</th>
-                <th className="text-right font-medium px-4 py-2">Diferencia %</th>
-                <th className="text-right font-medium px-4 py-2"># ARCA / ML</th>
+                <th className="text-right font-medium px-4 py-2">%</th>
                 <th className="text-right font-medium px-4 py-2"></th>
               </tr>
             </thead>
@@ -235,7 +247,14 @@ export default function ConciliacionMlPage() {
                   <td className="px-4 py-2 text-right tabular-nums">
                     {formatMoney(r.totalArca, "ARS")}
                   </td>
-                  <td className="px-4 py-2 text-right tabular-nums">
+                  {sellers.map((s) => (
+                    <td key={s.seller_id} className="px-4 py-2 text-right tabular-nums text-[var(--muted)]">
+                      {r.porSeller[String(s.seller_id)]
+                        ? formatMoney(r.porSeller[String(s.seller_id)], "ARS")
+                        : "—"}
+                    </td>
+                  ))}
+                  <td className="px-4 py-2 text-right tabular-nums font-semibold">
                     {formatMoney(r.totalMl, "ARS")}
                   </td>
                   <td className={`px-4 py-2 text-right tabular-nums font-medium ${classByDiff(r.diferenciaPct)}`}>
@@ -244,9 +263,6 @@ export default function ConciliacionMlPage() {
                   </td>
                   <td className={`px-4 py-2 text-right tabular-nums font-semibold ${classByDiff(r.diferenciaPct)}`}>
                     {r.diferenciaPct === null ? "—" : `${r.diferenciaPct >= 0 ? "+" : ""}${r.diferenciaPct.toFixed(2)}%`}
-                  </td>
-                  <td className="px-4 py-2 text-right tabular-nums text-[var(--muted)]">
-                    {r.cantArca.toLocaleString("es-AR")} / {r.cantMl.toLocaleString("es-AR")}
                   </td>
                   <td className="px-4 py-2 text-right">
                     <Link
@@ -263,6 +279,13 @@ export default function ConciliacionMlPage() {
               <tr>
                 <td className="px-4 py-2">Total</td>
                 <td className="px-4 py-2 text-right tabular-nums">{formatMoney(totales.arca, "ARS")}</td>
+                {sellers.map((s) => (
+                  <td key={s.seller_id} className="px-4 py-2 text-right tabular-nums text-[var(--muted)]">
+                    {totales.porSeller[String(s.seller_id)]
+                      ? formatMoney(totales.porSeller[String(s.seller_id)], "ARS")
+                      : "—"}
+                  </td>
+                ))}
                 <td className="px-4 py-2 text-right tabular-nums">{formatMoney(totales.ml, "ARS")}</td>
                 <td className={`px-4 py-2 text-right tabular-nums ${classByDiff(totalDiffPct)}`}>
                   {totales.diff >= 0 ? "+" : ""}
@@ -271,7 +294,6 @@ export default function ConciliacionMlPage() {
                 <td className={`px-4 py-2 text-right tabular-nums ${classByDiff(totalDiffPct)}`}>
                   {totalDiffPct === null ? "—" : `${totalDiffPct >= 0 ? "+" : ""}${totalDiffPct.toFixed(2)}%`}
                 </td>
-                <td className="px-4 py-2"></td>
                 <td className="px-4 py-2"></td>
               </tr>
             </tfoot>

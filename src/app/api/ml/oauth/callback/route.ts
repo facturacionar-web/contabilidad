@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
     }
 
     const admin = createAdminClient();
-    await saveTokens(admin, cronUserId, tokens);
+    await saveTokens(admin, cronUserId, tokens, me.nickname);
 
     const target = url.origin + "/arca/resumen-mensual?ml_connected=1&seller=" + tokens.mlUserId;
     const redirect = NextResponse.redirect(target);
