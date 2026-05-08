@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAccessToken, listAuthorizedSellers } from "./oauth";
-import { searchOrders, type MlOrder } from "./orders";
+import { searchOrders, getBillingInfo, type MlOrder } from "./orders";
 
 export type SyncResult = {
   ordenesNuevas: number;
@@ -85,6 +85,25 @@ export async function syncOrdenesMl(
           // Guardamos TODAS las órdenes (incluso sin date_closed) porque la vista
           // ya filtra por date_closed not null para los reportes.
           const row = mapOrderToRow(userId, sellerId, order);
+
+          // Llamada extra a /orders/{id}/billing_info para traer DNI/CUIT del
+          // comprador. ML no lo expone en /orders/search por privacidad.
+          // Esto agrega ~270ms por orden.
+          try {
+            const billing = await getBillingInfo(accessToken, order.id);
+            if (billing) {
+              const docNum = billing.doc_number?.replace(/\D/g, "");
+              if (docNum) {
+                row.doc_nro_buyer = Number(docNum);
+                row.doc_tipo_buyer = billing.doc_type ?? null;
+              }
+              row.billing_synced_at = new Date().toISOString();
+            }
+          } catch (e) {
+            // No crítico — guardamos la orden sin doc y seguimos
+            console.warn(`[ml/sync] billing_info ${order.id}: ${String(e)}`);
+          }
+
           const { error } = await supabase
             .from("ml_ordenes")
             .upsert(row, { onConflict: "user_id,ml_order_id" });

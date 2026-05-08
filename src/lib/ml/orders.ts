@@ -73,3 +73,41 @@ export async function getMe(accessToken: string): Promise<{ id: number; nickname
   if (!res.ok) throw new Error(`ML /users/me ${res.status}: ${text.slice(0, 300)}`);
   return JSON.parse(text);
 }
+
+/**
+ * Datos de facturación del comprador de una orden.
+ * Endpoint: GET /orders/{order_id}/billing_info
+ *
+ * Devuelve doc_type ("DNI" | "CUIT" | "CUIL" | "CDI" | "Otro") y doc_number,
+ * además de razón social y dirección. Para órdenes a "Consumidor Final" sin
+ * datos de facturación, los campos pueden venir vacíos o null.
+ */
+export type MlBillingInfo = {
+  doc_type?: string;
+  doc_number?: string;
+  business_name?: string;
+  first_name?: string;
+  last_name?: string;
+  address?: unknown;
+};
+
+export async function getBillingInfo(
+  accessToken: string,
+  orderId: number,
+): Promise<MlBillingInfo | null> {
+  const res = await fetch(`${ML_API_BASE}/orders/${orderId}/billing_info`, {
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+  if (res.status === 404) return null;
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`ML /orders/${orderId}/billing_info ${res.status}: ${text.slice(0, 300)}`);
+  }
+  const parsed = JSON.parse(text) as { billing_info?: MlBillingInfo } & MlBillingInfo;
+  // ML envuelve a veces en { billing_info: {...} } y a veces lo tira plano
+  return parsed.billing_info ?? parsed ?? null;
+}
+
