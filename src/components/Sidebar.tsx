@@ -74,6 +74,7 @@ const nav: (NavLink | NavGroup)[] = [
     children: [
       { href: "/arca/resumen-mensual", label: "Resumen mensual" },
       { href: "/arca/comprobantes", label: "Comprobantes emitidos" },
+      { href: "/arca/ventas-ml", label: "Ventas Mercado Libre" },
       { href: "/arca/conciliacion-ml", label: "Conciliación con ML" },
     ],
   },
