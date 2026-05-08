@@ -62,7 +62,7 @@ export async function syncOrdenesMl(
       }
 
       let nuevasEsteSeller = 0;
-      let ultimaFechaProcesada = desde;  // se compara con date_closed
+      let ultimaFechaProcesada = desde;  // cursor por date_created (limitación ML)
       let offset = 0;
 
       while (nuevasEsteSeller < maxPorTanda) {
@@ -76,14 +76,14 @@ export async function syncOrdenesMl(
         if (!resp.results.length) break;
 
         for (const order of resp.results) {
-          // Solo nos interesan órdenes cerradas (con date_closed).
-          // Las pendientes/canceladas no se sincronizan hasta que cierren.
-          const closedAt = parseDate(order.date_closed);
-          if (!closedAt) continue;
+          const createdAt = parseDate(order.date_created);
+          if (!createdAt) continue;
 
           // Saltar si ya estamos al día (la API es inclusive del `from`)
-          if (checkpointInicial && closedAt <= new Date(checkpointInicial)) continue;
+          if (checkpointInicial && createdAt <= new Date(checkpointInicial)) continue;
 
+          // Guardamos TODAS las órdenes (incluso sin date_closed) porque la vista
+          // ya filtra por date_closed not null para los reportes.
           const row = mapOrderToRow(userId, sellerId, order);
           const { error } = await supabase
             .from("ml_ordenes")
@@ -94,14 +94,14 @@ export async function syncOrdenesMl(
             continue;
           }
           nuevasEsteSeller += 1;
-          ultimaFechaProcesada = order.date_closed!;
+          ultimaFechaProcesada = order.date_created;
           if (nuevasEsteSeller >= maxPorTanda) break;
         }
 
         if (resp.results.length < limit) break;
         offset += limit;
         if (offset >= 1000) {
-          // Alcanzamos el límite de offset de ML. Avanzar el cursor por date_closed.
+          // Alcanzamos el límite de offset. Avanzar cursor por date_created.
           desde = ultimaFechaProcesada;
           offset = 0;
         }
