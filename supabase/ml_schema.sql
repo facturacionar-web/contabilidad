@@ -97,15 +97,17 @@ end $$;
 -- ============================================================
 -- Vista: resumen mensual de ML (espejo de arca_resumen_mensual_v)
 -- ============================================================
--- Usamos paid_amount porque incluye el envío que pagó el comprador.
--- total_amount son solo los items sin envío.
+-- Agrupamos por date_closed (cierre/pago de la orden). Eso alinea con la
+-- fecha de emisión del comprobante en ARCA. Usamos paid_amount porque
+-- incluye el envío que pagó el comprador.
 create or replace view public.ml_resumen_mensual_v as
 select
-  to_char(date_created at time zone 'America/Argentina/Buenos_Aires', 'YYYY-MM') as mes,
+  to_char(date_closed at time zone 'America/Argentina/Buenos_Aires', 'YYYY-MM') as mes,
   sum(coalesce(paid_amount, total_amount)) as total_ml,
   count(*) as cantidad
 from public.ml_ordenes
-where status in ('paid', 'partially_paid')   -- solo las efectivamente pagadas
+where status in ('paid', 'partially_paid')
+  and date_closed is not null
 group by 1;
 
 grant select on public.ml_resumen_mensual_v to authenticated;

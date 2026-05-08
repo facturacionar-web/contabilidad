@@ -21,28 +21,29 @@ type SearchResponse = {
 };
 
 /**
- * Busca órdenes para un seller. Soporta filtro por fecha y paginación.
+ * Busca órdenes para un seller, ordenadas por date_closed ascendente.
  * Endpoint: GET /orders/search
  *
- * Ojo: para paginar más de 1000 órdenes ML pide usar `sort` por fecha y
- * `order.date_created.from/to` (no soporta offset > 1000 con ciertos sorts).
+ * Usamos date_closed (no date_created) porque alinea con la fecha real de
+ * la venta cerrada, que es lo que se factura en ARCA. Las órdenes sin
+ * date_closed (canceladas o pendientes) no aparecen en este filtro.
  */
 export async function searchOrders(opts: {
   accessToken: string;
   sellerId: number;
-  desde: string;       // ISO 8601 con timezone offset
+  desde: string;       // ISO 8601 con timezone offset (date_closed.from)
   hasta?: string;      // si no se pasa, usa "now"
   limit?: number;      // max 50 por la API
   offset?: number;     // 0..1000
 }): Promise<SearchResponse> {
   const params = new URLSearchParams({
     seller: String(opts.sellerId),
-    sort: "date_asc",
-    "order.date_created.from": opts.desde,
+    sort: "date_closed_asc",
+    "order.date_closed.from": opts.desde,
     limit: String(Math.min(opts.limit ?? 50, 50)),
     offset: String(opts.offset ?? 0),
   });
-  if (opts.hasta) params.set("order.date_created.to", opts.hasta);
+  if (opts.hasta) params.set("order.date_closed.to", opts.hasta);
 
   const url = `${ML_API_BASE}/orders/search?${params.toString()}`;
   const res = await fetch(url, {
