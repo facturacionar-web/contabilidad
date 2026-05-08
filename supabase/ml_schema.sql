@@ -99,7 +99,8 @@ end $$;
 -- ============================================================
 -- Agrupamos por date_closed (cierre/pago de la orden). Eso alinea con la
 -- fecha de emisión del comprobante en ARCA. Usamos paid_amount porque
--- incluye el envío que pagó el comprador.
+-- incluye el envío que pagó el comprador. Filtramos cierres anteriores
+-- a 2026-01-01 ARG (por timezone hay pocas que caen en dic-2025).
 create or replace view public.ml_resumen_mensual_v as
 select
   to_char(date_closed at time zone 'America/Argentina/Buenos_Aires', 'YYYY-MM') as mes,
@@ -108,6 +109,7 @@ select
 from public.ml_ordenes
 where status in ('paid', 'partially_paid')
   and date_closed is not null
+  and date_closed >= ('2026-01-01'::date at time zone 'America/Argentina/Buenos_Aires')
 group by 1;
 
 grant select on public.ml_resumen_mensual_v to authenticated;
