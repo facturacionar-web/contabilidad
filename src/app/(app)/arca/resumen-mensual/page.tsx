@@ -5,18 +5,6 @@ import { createClient } from "@/lib/supabase/client";
 import { formatMoney } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
 import { Loader2, ExternalLink, Info, RefreshCw, CheckCircle2, AlertTriangle } from "lucide-react";
-import {
-  TIPO_FACTURAS,
-  TIPO_NOTAS_DEBITO,
-  TIPO_NOTAS_CREDITO,
-  TIPOS_RELEVANTES,
-} from "@/lib/arca/tipos-cbte";
-
-type Row = {
-  fecha_cbte: string;
-  cbte_tipo: number;
-  imp_total: number;
-};
 
 type ResumenMes = {
   mes: string;            // "YYYY-MM"
@@ -27,9 +15,19 @@ type ResumenMes = {
   cantidad: number;
 };
 
-function mesDe(fecha: string): string {
-  return fecha.slice(0, 7); // YYYY-MM-DD → YYYY-MM
-}
+type ViewRow = {
+  mes: string;
+  facturas: number | string | null;
+  notas_debito: number | string | null;
+  notas_credito: number | string | null;
+  cantidad: number | null;
+};
+
+type SyncStatus =
+  | { state: "idle" }
+  | { state: "running" }
+  | { state: "ok"; nuevos: number; ts: number }
+  | { state: "error"; msg: string };
 
 function nombreMes(yyyymm: string): string {
   const [y, m] = yyyymm.split("-");
@@ -41,45 +39,42 @@ function nombreMes(yyyymm: string): string {
   return `${meses[idx] ?? m} ${y}`;
 }
 
-type SyncStatus =
-  | { state: "idle" }
-  | { state: "running" }
-  | { state: "ok"; nuevos: number; ts: number }
-  | { state: "error"; msg: string };
-
 export default function ResumenMensualArcaPage() {
-  const [rows, setRows] = useState<Row[] | null>(null);
+  const [resumen, setResumen] = useState<ResumenMes[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sync, setSync] = useState<SyncStatus>({ state: "idle" });
 
-  const loadRows = useCallback(async () => {
+  const loadResumen = useCallback(async () => {
     const supabase = createClient();
-    const all: Row[] = [];
-    const pageSize = 1000;
-    let from = 0;
-    while (true) {
-      const { data, error: err } = await supabase
-        .from("arca_comprobantes_emitidos")
-        .select("fecha_cbte, cbte_tipo, imp_total")
-        .in("cbte_tipo", TIPOS_RELEVANTES as unknown as number[])
-        .order("fecha_cbte", { ascending: false })
-        .range(from, from + pageSize - 1);
+    const { data, error: err } = await supabase
+      .from("arca_resumen_mensual_v")
+      .select("mes, facturas, notas_debito, notas_credito, cantidad")
+      .order("mes", { ascending: false });
 
-      if (err) {
-        setError(err.message);
-        return;
-      }
-      if (!data || data.length === 0) break;
-      all.push(...(data as Row[]));
-      if (data.length < pageSize) break;
-      from += pageSize;
+    if (err) {
+      setError(err.message);
+      return;
     }
-    setRows(all);
+    const mapped: ResumenMes[] = (data ?? []).map((r) => {
+      const v = r as ViewRow;
+      const facturas = Number(v.facturas ?? 0);
+      const notasDebito = Number(v.notas_debito ?? 0);
+      const notasCredito = Number(v.notas_credito ?? 0);
+      return {
+        mes: v.mes,
+        facturas,
+        notasDebito,
+        notasCredito,
+        totalArca: facturas + notasDebito - notasCredito,
+        cantidad: Number(v.cantidad ?? 0),
+      };
+    });
+    setResumen(mapped);
   }, []);
 
   useEffect(() => {
-    loadRows();
-  }, [loadRows]);
+    loadResumen();
+  }, [loadResumen]);
 
   async function handleSync() {
     setSync({ state: "running" });
@@ -95,45 +90,14 @@ export default function ResumenMensualArcaPage() {
         return;
       }
       setSync({ state: "ok", nuevos: j.comprobantesNuevos ?? 0, ts: Date.now() });
-      await loadRows();
+      await loadResumen();
     } catch (e) {
       setSync({ state: "error", msg: String(e) });
     }
   }
 
-  const resumen: ResumenMes[] = useMemo(() => {
-    if (!rows) return [];
-    const map = new Map<string, ResumenMes>();
-    for (const r of rows) {
-      const mes = mesDe(r.fecha_cbte);
-      if (!map.has(mes)) {
-        map.set(mes, {
-          mes,
-          facturas: 0,
-          notasDebito: 0,
-          notasCredito: 0,
-          totalArca: 0,
-          cantidad: 0,
-        });
-      }
-      const acc = map.get(mes)!;
-      const monto = Number(r.imp_total) || 0;
-      acc.cantidad += 1;
-      if ((TIPO_FACTURAS as readonly number[]).includes(r.cbte_tipo)) {
-        acc.facturas += monto;
-      } else if ((TIPO_NOTAS_DEBITO as readonly number[]).includes(r.cbte_tipo)) {
-        acc.notasDebito += monto;
-      } else if ((TIPO_NOTAS_CREDITO as readonly number[]).includes(r.cbte_tipo)) {
-        acc.notasCredito += monto;
-      }
-    }
-    for (const acc of map.values()) {
-      acc.totalArca = acc.facturas + acc.notasDebito - acc.notasCredito;
-    }
-    return [...map.values()].sort((a, b) => b.mes.localeCompare(a.mes));
-  }, [rows]);
-
   const totales = useMemo(() => {
+    if (!resumen) return { facturas: 0, notasDebito: 0, notasCredito: 0, totalArca: 0, cantidad: 0 };
     return resumen.reduce(
       (acc, r) => ({
         facturas: acc.facturas + r.facturas,
@@ -199,19 +163,19 @@ export default function ResumenMensualArcaPage() {
         </div>
       )}
 
-      {!rows && !error && (
+      {!resumen && !error && (
         <div className="flex items-center justify-center py-16 text-[var(--muted)]">
-          <Loader2 className="w-5 h-5 animate-spin mr-2" /> Cargando comprobantes…
+          <Loader2 className="w-5 h-5 animate-spin mr-2" /> Cargando resumen…
         </div>
       )}
 
-      {rows && resumen.length === 0 && (
+      {resumen && resumen.length === 0 && (
         <div className="rounded-lg border border-[var(--border)] p-8 text-center text-[var(--muted)]">
           No hay comprobantes para mostrar.
         </div>
       )}
 
-      {resumen.length > 0 && (
+      {resumen && resumen.length > 0 && (
         <div className="rounded-lg border border-[var(--border)] bg-white overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-slate-600">

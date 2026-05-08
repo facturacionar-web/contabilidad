@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { formatMoney, formatDate } from "@/lib/format";
@@ -31,6 +31,15 @@ type Cbte = {
 
 type Filtro = "todos" | "facturas" | "notas_credito" | "notas_debito";
 
+type SyncStatus =
+  | { state: "idle" }
+  | { state: "running" }
+  | { state: "ok"; nuevos: number }
+  | { state: "error"; msg: string };
+
+const PAGE_SIZE = 50;
+const EXPORT_MAX = 5000;
+
 function firstDayOfMonth(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
@@ -39,6 +48,13 @@ function firstDayOfMonth(): string {
 function todayISO(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function tiposPorFiltro(f: Filtro): readonly number[] {
+  if (f === "facturas") return TIPO_FACTURAS;
+  if (f === "notas_debito") return TIPO_NOTAS_DEBITO;
+  if (f === "notas_credito") return TIPO_NOTAS_CREDITO;
+  return TIPOS_RELEVANTES;
 }
 
 export default function ArcaComprobantesPage() {
@@ -51,53 +67,85 @@ export default function ArcaComprobantesPage() {
   const [tipoFiltro, setTipoFiltro] = useState<Filtro>("todos");
   const [ptoVtaFiltro, setPtoVtaFiltro] = useState<string>("todos");
   const [docNroFiltro, setDocNroFiltro] = useState("");
+  const [docNroAplicado, setDocNroAplicado] = useState("");
 
   const [rows, setRows] = useState<Cbte[] | null>(null);
+  const [totalCount, setTotalCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
-  const PAGE_SIZE = 50;
+  const [loading, setLoading] = useState(false);
 
-  type SyncStatus =
-    | { state: "idle" }
-    | { state: "running" }
-    | { state: "ok"; nuevos: number }
-    | { state: "error"; msg: string };
+  const [ptosVentaDisponibles, setPtosVentaDisponibles] = useState<number[]>([]);
   const [sync, setSync] = useState<SyncStatus>({ state: "idle" });
+  const [exporting, setExporting] = useState(false);
 
-  const loadRows = useCallback(async () => {
+  // Cargar PtoVta una sola vez (vista distinct)
+  useEffect(() => {
     const supabase = createClient();
-    setError(null);
-    const all: Cbte[] = [];
-    const pageSize = 1000;
-    let from = 0;
-    while (true) {
-      const { data, error: err } = await supabase
-        .from("arca_comprobantes_emitidos")
-        .select("id, fecha_cbte, pto_vta, cbte_tipo, cbte_nro, doc_tipo, doc_nro, imp_total, imp_neto, imp_iva, cae, resultado")
-        .in("cbte_tipo", TIPOS_RELEVANTES as unknown as number[])
-        .gte("fecha_cbte", desde)
-        .lte("fecha_cbte", hasta)
-        .order("fecha_cbte", { ascending: false })
-        .order("cbte_nro", { ascending: false })
-        .range(from, from + pageSize - 1);
+    supabase
+      .from("arca_ptos_venta_v")
+      .select("pto_vta")
+      .then(({ data }) => {
+        if (data) setPtosVentaDisponibles(data.map((r) => Number(r.pto_vta)));
+      });
+  }, []);
 
-      if (err) {
-        setError(err.message);
-        return;
-      }
-      if (!data || data.length === 0) break;
-      all.push(...(data as Cbte[]));
-      if (data.length < pageSize) break;
-      from += pageSize;
+  // Reset página cuando cambian filtros
+  useEffect(() => {
+    setPage(0);
+  }, [desde, hasta, tipoFiltro, ptoVtaFiltro, docNroAplicado]);
+
+  // Debounce del filtro CUIT/DNI (aplica recién después de 400ms sin tipear)
+  useEffect(() => {
+    const id = setTimeout(() => setDocNroAplicado(docNroFiltro.trim()), 400);
+    return () => clearTimeout(id);
+  }, [docNroFiltro]);
+
+  const loadPage = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    const supabase = createClient();
+    const tipos = tiposPorFiltro(tipoFiltro);
+    let query = supabase
+      .from("arca_comprobantes_emitidos")
+      .select(
+        "id, fecha_cbte, pto_vta, cbte_tipo, cbte_nro, doc_tipo, doc_nro, imp_total, imp_neto, imp_iva, cae, resultado",
+        { count: "exact" },
+      )
+      .in("cbte_tipo", tipos as unknown as number[])
+      .gte("fecha_cbte", desde)
+      .lte("fecha_cbte", hasta)
+      .order("fecha_cbte", { ascending: false })
+      .order("cbte_nro", { ascending: false })
+      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+
+    if (ptoVtaFiltro !== "todos") {
+      query = query.eq("pto_vta", Number(ptoVtaFiltro));
     }
-    setRows(all);
-  }, [desde, hasta]);
+    if (docNroAplicado) {
+      // doc_nro es bigint en BD. Acepta solo dígitos.
+      const onlyDigits = docNroAplicado.replace(/\D/g, "");
+      if (onlyDigits) {
+        query = query.eq("doc_nro", Number(onlyDigits));
+      }
+    }
+
+    const { data, error: err, count } = await query;
+    if (err) {
+      setError(err.message);
+      setRows([]);
+      setTotalCount(0);
+      setLoading(false);
+      return;
+    }
+    setRows((data ?? []) as Cbte[]);
+    setTotalCount(count ?? 0);
+    setLoading(false);
+  }, [desde, hasta, tipoFiltro, ptoVtaFiltro, docNroAplicado, page]);
 
   useEffect(() => {
-    setRows(null);
-    setPage(0);
-    loadRows();
-  }, [loadRows]);
+    loadPage();
+  }, [loadPage]);
 
   async function handleSync() {
     setSync({ state: "running" });
@@ -113,64 +161,60 @@ export default function ArcaComprobantesPage() {
         return;
       }
       setSync({ state: "ok", nuevos: j.comprobantesNuevos ?? 0 });
-      await loadRows();
+      await loadPage();
     } catch (e) {
       setSync({ state: "error", msg: String(e) });
     }
   }
 
-  const ptosVentaDisponibles = useMemo(() => {
-    if (!rows) return [] as number[];
-    return [...new Set(rows.map((r) => r.pto_vta))].sort((a, b) => a - b);
-  }, [rows]);
+  async function exportExcel() {
+    setExporting(true);
+    try {
+      const supabase = createClient();
+      const tipos = tiposPorFiltro(tipoFiltro);
+      let query = supabase
+        .from("arca_comprobantes_emitidos")
+        .select("fecha_cbte, pto_vta, cbte_tipo, cbte_nro, doc_tipo, doc_nro, imp_total, imp_neto, imp_iva, cae, resultado")
+        .in("cbte_tipo", tipos as unknown as number[])
+        .gte("fecha_cbte", desde)
+        .lte("fecha_cbte", hasta)
+        .order("fecha_cbte", { ascending: false })
+        .order("cbte_nro", { ascending: false })
+        .range(0, EXPORT_MAX - 1);
 
-  const filtrados = useMemo(() => {
-    if (!rows) return [];
-    return rows.filter((r) => {
-      if (tipoFiltro === "facturas" && !(TIPO_FACTURAS as readonly number[]).includes(r.cbte_tipo)) return false;
-      if (tipoFiltro === "notas_credito" && !(TIPO_NOTAS_CREDITO as readonly number[]).includes(r.cbte_tipo)) return false;
-      if (tipoFiltro === "notas_debito" && !(TIPO_NOTAS_DEBITO as readonly number[]).includes(r.cbte_tipo)) return false;
-      if (ptoVtaFiltro !== "todos" && r.pto_vta !== Number(ptoVtaFiltro)) return false;
-      if (docNroFiltro && !String(r.doc_nro ?? "").includes(docNroFiltro.trim())) return false;
-      return true;
-    });
-  }, [rows, tipoFiltro, ptoVtaFiltro, docNroFiltro]);
+      if (ptoVtaFiltro !== "todos") query = query.eq("pto_vta", Number(ptoVtaFiltro));
+      if (docNroAplicado) {
+        const onlyDigits = docNroAplicado.replace(/\D/g, "");
+        if (onlyDigits) query = query.eq("doc_nro", Number(onlyDigits));
+      }
 
-  const totalImporte = useMemo(
-    () =>
-      filtrados.reduce((sum, r) => {
-        const monto = Number(r.imp_total) || 0;
-        return (TIPO_NOTAS_CREDITO as readonly number[]).includes(r.cbte_tipo)
-          ? sum - monto
-          : sum + monto;
-      }, 0),
-    [filtrados],
-  );
-
-  const paginados = useMemo(
-    () => filtrados.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
-    [filtrados, page],
-  );
-  const totalPaginas = Math.max(1, Math.ceil(filtrados.length / PAGE_SIZE));
-
-  function exportExcel() {
-    const data = filtrados.map((r) => ({
-      Fecha: r.fecha_cbte,
-      "Pto Vta": r.pto_vta,
-      Tipo: tipoLabel(r.cbte_tipo),
-      Número: r.cbte_nro,
-      "Doc receptor": r.doc_nro ?? "",
-      Neto: r.imp_neto ?? "",
-      IVA: r.imp_iva ?? "",
-      Total: r.imp_total,
-      CAE: r.cae,
-      Resultado: r.resultado ?? "",
-    }));
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "ARCA");
-    XLSX.writeFile(wb, `arca-comprobantes-${desde}-a-${hasta}.xlsx`);
+      const { data, error: err } = await query;
+      if (err) {
+        setError(err.message);
+        return;
+      }
+      const exportData = (data ?? []).map((r) => ({
+        Fecha: r.fecha_cbte,
+        "Pto Vta": r.pto_vta,
+        Tipo: tipoLabel(r.cbte_tipo as number),
+        Número: r.cbte_nro,
+        "Doc receptor": r.doc_nro ?? "",
+        Neto: r.imp_neto ?? "",
+        IVA: r.imp_iva ?? "",
+        Total: r.imp_total,
+        CAE: r.cae,
+        Resultado: r.resultado ?? "",
+      }));
+      const ws = XLSX.utils.json_to_sheet(exportData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "ARCA");
+      XLSX.writeFile(wb, `arca-comprobantes-${desde}-a-${hasta}.xlsx`);
+    } finally {
+      setExporting(false);
+    }
   }
+
+  const totalPaginas = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   return (
     <div>
@@ -193,10 +237,12 @@ export default function ArcaComprobantesPage() {
             </button>
             <button
               onClick={exportExcel}
-              disabled={!rows || filtrados.length === 0}
+              disabled={exporting || totalCount === 0}
               className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-[var(--border)] hover:bg-slate-50 disabled:opacity-50"
+              title={totalCount > EXPORT_MAX ? `Solo se exportarán las primeras ${EXPORT_MAX} filas` : undefined}
             >
-              <Download className="w-4 h-4" /> Exportar Excel
+              {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+              {exporting ? "Generando…" : "Exportar Excel"}
             </button>
           </div>
         }
@@ -222,29 +268,15 @@ export default function ArcaComprobantesPage() {
       <div className="rounded-lg border border-[var(--border)] bg-white p-4 mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
         <div>
           <label className="block text-xs font-medium text-[var(--muted)] mb-1">Desde</label>
-          <input
-            type="date"
-            value={desde}
-            onChange={(e) => setDesde(e.target.value)}
-            className="input"
-          />
+          <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="input" />
         </div>
         <div>
           <label className="block text-xs font-medium text-[var(--muted)] mb-1">Hasta</label>
-          <input
-            type="date"
-            value={hasta}
-            onChange={(e) => setHasta(e.target.value)}
-            className="input"
-          />
+          <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className="input" />
         </div>
         <div>
           <label className="block text-xs font-medium text-[var(--muted)] mb-1">Tipo</label>
-          <select
-            value={tipoFiltro}
-            onChange={(e) => setTipoFiltro(e.target.value as Filtro)}
-            className="input"
-          >
+          <select value={tipoFiltro} onChange={(e) => setTipoFiltro(e.target.value as Filtro)} className="input">
             <option value="todos">Todos</option>
             <option value="facturas">Facturas</option>
             <option value="notas_debito">Notas de Débito</option>
@@ -253,16 +285,10 @@ export default function ArcaComprobantesPage() {
         </div>
         <div>
           <label className="block text-xs font-medium text-[var(--muted)] mb-1">Pto. Vta</label>
-          <select
-            value={ptoVtaFiltro}
-            onChange={(e) => setPtoVtaFiltro(e.target.value)}
-            className="input"
-          >
+          <select value={ptoVtaFiltro} onChange={(e) => setPtoVtaFiltro(e.target.value)} className="input">
             <option value="todos">Todos</option>
             {ptosVentaDisponibles.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
+              <option key={p} value={p}>{p}</option>
             ))}
           </select>
         </div>
@@ -272,23 +298,25 @@ export default function ArcaComprobantesPage() {
             type="text"
             value={docNroFiltro}
             onChange={(e) => setDocNroFiltro(e.target.value)}
-            placeholder="Buscar..."
+            placeholder="Buscar por número exacto"
             className="input"
+            inputMode="numeric"
           />
         </div>
       </div>
 
       {/* Stats */}
-      <div className="text-sm text-[var(--muted)] mb-3 flex items-center gap-4">
+      <div className="text-sm text-[var(--muted)] mb-3 flex items-center gap-2">
         <span>
-          {filtrados.length}{" "}
-          {filtrados.length === 1 ? "comprobante" : "comprobantes"}
+          {loading
+            ? "Cargando…"
+            : `${totalCount.toLocaleString("es-AR")} ${totalCount === 1 ? "comprobante" : "comprobantes"}`}
         </span>
-        <span>·</span>
-        <span>
-          Total (Fac + ND − NC):{" "}
-          <strong className="text-slate-700">{formatMoney(totalImporte, "ARS")}</strong>
-        </span>
+        {totalCount > EXPORT_MAX && (
+          <span className="text-amber-600">
+            · El export se limita a {EXPORT_MAX.toLocaleString("es-AR")} filas (filtrá por mes para exportar todo)
+          </span>
+        )}
       </div>
 
       {error && (
@@ -297,19 +325,19 @@ export default function ArcaComprobantesPage() {
         </div>
       )}
 
-      {!rows && !error && (
+      {!rows && !error && loading && (
         <div className="flex items-center justify-center py-16 text-[var(--muted)]">
           <Loader2 className="w-5 h-5 animate-spin mr-2" /> Cargando comprobantes…
         </div>
       )}
 
-      {rows && filtrados.length === 0 && (
+      {rows && rows.length === 0 && !loading && (
         <div className="rounded-lg border border-[var(--border)] p-8 text-center text-[var(--muted)]">
           Sin comprobantes en este rango.
         </div>
       )}
 
-      {paginados.length > 0 && (
+      {rows && rows.length > 0 && (
         <>
           <div className="rounded-lg border border-[var(--border)] bg-white overflow-hidden">
             <table className="w-full text-sm">
@@ -326,44 +354,26 @@ export default function ArcaComprobantesPage() {
                 </tr>
               </thead>
               <tbody>
-                {paginados.map((r) => {
+                {rows.map((r) => {
                   const esNC = (TIPO_NOTAS_CREDITO as readonly number[]).includes(r.cbte_tipo);
                   return (
                     <tr key={r.id} className="border-t border-[var(--border)] hover:bg-slate-50">
                       <td className="px-3 py-2 whitespace-nowrap">{formatDate(r.fecha_cbte)}</td>
                       <td className="px-3 py-2">
-                        <span
-                          className={`inline-block px-1.5 py-0.5 text-xs rounded ${
-                            esNC
-                              ? "bg-red-100 text-red-700"
-                              : "bg-slate-100 text-slate-700"
-                          }`}
-                        >
+                        <span className={`inline-block px-1.5 py-0.5 text-xs rounded ${esNC ? "bg-red-100 text-red-700" : "bg-slate-100 text-slate-700"}`}>
                           {tipoLabel(r.cbte_tipo)}
                         </span>
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums">
-                        {String(r.pto_vta).padStart(4, "0")}-
-                        {String(r.cbte_nro).padStart(8, "0")}
+                        {String(r.pto_vta).padStart(4, "0")}-{String(r.cbte_nro).padStart(8, "0")}
                       </td>
                       <td className="px-3 py-2 tabular-nums">{r.doc_nro ?? "—"}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">
-                        {r.imp_neto ? formatMoney(r.imp_neto, "ARS") : "—"}
+                      <td className="px-3 py-2 text-right tabular-nums">{r.imp_neto ? formatMoney(r.imp_neto, "ARS") : "—"}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{r.imp_iva ? formatMoney(r.imp_iva, "ARS") : "—"}</td>
+                      <td className={`px-3 py-2 text-right tabular-nums font-medium ${esNC ? "text-red-600" : ""}`}>
+                        {esNC ? "− " : ""}{formatMoney(r.imp_total, "ARS")}
                       </td>
-                      <td className="px-3 py-2 text-right tabular-nums">
-                        {r.imp_iva ? formatMoney(r.imp_iva, "ARS") : "—"}
-                      </td>
-                      <td
-                        className={`px-3 py-2 text-right tabular-nums font-medium ${
-                          esNC ? "text-red-600" : ""
-                        }`}
-                      >
-                        {esNC ? "− " : ""}
-                        {formatMoney(r.imp_total, "ARS")}
-                      </td>
-                      <td className="px-3 py-2 text-xs text-[var(--muted)] tabular-nums">
-                        {r.cae}
-                      </td>
+                      <td className="px-3 py-2 text-xs text-[var(--muted)] tabular-nums">{r.cae}</td>
                     </tr>
                   );
                 })}
@@ -374,19 +384,19 @@ export default function ArcaComprobantesPage() {
           {totalPaginas > 1 && (
             <div className="flex items-center justify-between mt-3 text-sm">
               <span className="text-[var(--muted)]">
-                Página {page + 1} de {totalPaginas}
+                Página {page + 1} de {totalPaginas.toLocaleString("es-AR")}
               </span>
               <div className="flex gap-2">
                 <button
                   onClick={() => setPage((p) => Math.max(0, p - 1))}
-                  disabled={page === 0}
+                  disabled={page === 0 || loading}
                   className="px-3 py-1.5 rounded-md border border-[var(--border)] hover:bg-slate-50 disabled:opacity-40"
                 >
                   ← Anterior
                 </button>
                 <button
                   onClick={() => setPage((p) => Math.min(totalPaginas - 1, p + 1))}
-                  disabled={page >= totalPaginas - 1}
+                  disabled={page >= totalPaginas - 1 || loading}
                   className="px-3 py-1.5 rounded-md border border-[var(--border)] hover:bg-slate-50 disabled:opacity-40"
                 >
                   Siguiente →
