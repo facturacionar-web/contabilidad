@@ -115,13 +115,14 @@ export default function VentasMlPage() {
     // Para órdenes sin date_closed (cancelled/invalid), filtramos por date_created.
     // En esta página el filtro es solo por date_closed, asumimos que el usuario
     // quiere ver órdenes que cerraron en el rango.
-    // count: 'estimated' usa planner statistics (rápido pero aproximado).
-    // Para 88k+ filas, count: 'exact' suele dar timeout.
+    // count: 'exact' es preciso. Funciona rápido gracias a los índices
+    // sobre date_closed/status/seller. Si llegáramos a tener timeout otra vez,
+    // bajar a 'estimated' acepta ±10% de error pero garantiza respuesta.
     let query = supabase
       .from("ml_ordenes")
       .select(
         "id, ml_order_id, ml_seller_id, date_created, date_closed, status, total_amount, paid_amount, shipping_cost, currency_id, buyer_nickname, buyer_id",
-        { count: "estimated" },
+        { count: "exact" },
       )
       .not("date_closed", "is", null)
       .gte("date_closed", `${desde}T00:00:00-03:00`)
