@@ -38,7 +38,8 @@ type SyncStatus =
   | { state: "error"; msg: string };
 
 const PAGE_SIZE = 50;
-const EXPORT_MAX = 5000;
+const EXPORT_CHUNK = 1000;       // Supabase devuelve max 1000 por query
+const EXPORT_HARD_LIMIT = 100000; // tope absoluto para no quedar colgado
 
 function firstDayOfMonth(): string {
   const d = new Date();
@@ -78,6 +79,7 @@ export default function ArcaComprobantesPage() {
   const [ptosVentaDisponibles, setPtosVentaDisponibles] = useState<number[]>([]);
   const [sync, setSync] = useState<SyncStatus>({ state: "idle" });
   const [exporting, setExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
 
   // Cargar PtoVta una sola vez (vista distinct)
   useEffect(() => {
@@ -169,31 +171,44 @@ export default function ArcaComprobantesPage() {
 
   async function exportExcel() {
     setExporting(true);
+    setExportProgress(0);
     try {
       const supabase = createClient();
       const tipos = tiposPorFiltro(tipoFiltro);
-      let query = supabase
-        .from("arca_comprobantes_emitidos")
-        .select("fecha_cbte, pto_vta, cbte_tipo, cbte_nro, doc_tipo, doc_nro, imp_total, imp_neto, imp_iva, cae, resultado")
-        .in("cbte_tipo", tipos as unknown as number[])
-        .gte("fecha_cbte", desde)
-        .lte("fecha_cbte", hasta)
-        .order("fecha_cbte", { ascending: false })
-        .order("cbte_nro", { ascending: false })
-        .range(0, EXPORT_MAX - 1);
 
-      if (ptoVtaFiltro !== "todos") query = query.eq("pto_vta", Number(ptoVtaFiltro));
-      if (docNroAplicado) {
-        const onlyDigits = docNroAplicado.replace(/\D/g, "");
-        if (onlyDigits) query = query.eq("doc_nro", Number(onlyDigits));
+      // Fetch paginado: Supabase devuelve max 1000 por query. Iteramos.
+      const all: Array<Record<string, unknown>> = [];
+      let from = 0;
+      while (from < EXPORT_HARD_LIMIT) {
+        let query = supabase
+          .from("arca_comprobantes_emitidos")
+          .select("fecha_cbte, pto_vta, cbte_tipo, cbte_nro, doc_tipo, doc_nro, imp_total, imp_neto, imp_iva, cae, resultado")
+          .in("cbte_tipo", tipos as unknown as number[])
+          .gte("fecha_cbte", desde)
+          .lte("fecha_cbte", hasta)
+          .order("fecha_cbte", { ascending: false })
+          .order("cbte_nro", { ascending: false })
+          .range(from, from + EXPORT_CHUNK - 1);
+
+        if (ptoVtaFiltro !== "todos") query = query.eq("pto_vta", Number(ptoVtaFiltro));
+        if (docNroAplicado) {
+          const onlyDigits = docNroAplicado.replace(/\D/g, "");
+          if (onlyDigits) query = query.eq("doc_nro", Number(onlyDigits));
+        }
+
+        const { data, error: err } = await query;
+        if (err) {
+          setError(err.message);
+          return;
+        }
+        if (!data || data.length === 0) break;
+        all.push(...(data as Array<Record<string, unknown>>));
+        setExportProgress(all.length);
+        if (data.length < EXPORT_CHUNK) break;
+        from += EXPORT_CHUNK;
       }
 
-      const { data, error: err } = await query;
-      if (err) {
-        setError(err.message);
-        return;
-      }
-      const exportData = (data ?? []).map((r) => ({
+      const exportData = all.map((r) => ({
         Fecha: r.fecha_cbte,
         "Pto Vta": r.pto_vta,
         Tipo: tipoLabel(r.cbte_tipo as number),
@@ -211,6 +226,7 @@ export default function ArcaComprobantesPage() {
       XLSX.writeFile(wb, `arca-comprobantes-${desde}-a-${hasta}.xlsx`);
     } finally {
       setExporting(false);
+      setExportProgress(0);
     }
   }
 
@@ -239,10 +255,13 @@ export default function ArcaComprobantesPage() {
               onClick={exportExcel}
               disabled={exporting || totalCount === 0}
               className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-[var(--border)] hover:bg-slate-50 disabled:opacity-50"
-              title={totalCount > EXPORT_MAX ? `Solo se exportarán las primeras ${EXPORT_MAX} filas` : undefined}
             >
               {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-              {exporting ? "Generando…" : "Exportar Excel"}
+              {exporting
+                ? exportProgress > 0
+                  ? `${exportProgress.toLocaleString("es-AR")}/${totalCount.toLocaleString("es-AR")}…`
+                  : "Generando…"
+                : "Exportar Excel"}
             </button>
           </div>
         }
@@ -312,11 +331,6 @@ export default function ArcaComprobantesPage() {
             ? "Cargando…"
             : `${totalCount.toLocaleString("es-AR")} ${totalCount === 1 ? "comprobante" : "comprobantes"}`}
         </span>
-        {totalCount > EXPORT_MAX && (
-          <span className="text-amber-600">
-            · El export se limita a {EXPORT_MAX.toLocaleString("es-AR")} filas (filtrá por mes para exportar todo)
-          </span>
-        )}
       </div>
 
       {error && (
