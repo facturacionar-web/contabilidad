@@ -59,29 +59,62 @@ export default function ConciliacionMlPage() {
 
   const load = useCallback(async () => {
     const supabase = createClient();
-    const { data: rows, error: err } = await supabase
-      .from("arca_vs_ml_mensual_v")
-      .select("mes, total_arca, total_ml, diferencia, diferencia_pct, cant_arca, cant_ml")
-      .order("mes", { ascending: false });
-    if (err) {
-      setError(err.message);
+    // Hacemos las 2 queries en paralelo y unimos en cliente. Es mucho más rápido
+    // que pegarle a la VIEW arca_vs_ml_mensual_v (que hace FULL OUTER JOIN sobre
+    // ~190k filas y suele timeout-ear en Supabase).
+    const [arcaRes, mlRes] = await Promise.all([
+      supabase
+        .from("arca_resumen_mensual_v")
+        .select("mes, facturas, notas_debito, notas_credito, cantidad"),
+      supabase
+        .from("ml_resumen_mensual_v")
+        .select("mes, total_ml, cantidad"),
+    ]);
+
+    if (arcaRes.error) {
+      setError(`ARCA: ${arcaRes.error.message}`);
       return;
     }
-    const mapped: ConciliacionMes[] = (rows ?? []).map((r) => {
-      const v = r as Row;
-      return {
-        mes: v.mes,
-        totalArca: Number(v.total_arca ?? 0),
-        totalMl: Number(v.total_ml ?? 0),
-        diferencia: Number(v.diferencia ?? 0),
-        diferenciaPct: v.diferencia_pct === null || v.diferencia_pct === undefined
-          ? null
-          : Number(v.diferencia_pct),
-        cantArca: Number(v.cant_arca ?? 0),
-        cantMl: Number(v.cant_ml ?? 0),
-      };
-    });
-    setData(mapped);
+    if (mlRes.error) {
+      setError(`ML: ${mlRes.error.message}`);
+      return;
+    }
+
+    const arcaByMes = new Map<string, { totalArca: number; cantArca: number }>();
+    for (const r of arcaRes.data ?? []) {
+      const fac = Number((r as { facturas?: number | string | null }).facturas ?? 0);
+      const nd = Number((r as { notas_debito?: number | string | null }).notas_debito ?? 0);
+      const nc = Number((r as { notas_credito?: number | string | null }).notas_credito ?? 0);
+      arcaByMes.set(r.mes, { totalArca: fac + nd - nc, cantArca: Number((r as { cantidad?: number | null }).cantidad ?? 0) });
+    }
+
+    const mlByMes = new Map<string, { totalMl: number; cantMl: number }>();
+    for (const r of mlRes.data ?? []) {
+      mlByMes.set(r.mes, {
+        totalMl: Number((r as { total_ml?: number | string | null }).total_ml ?? 0),
+        cantMl: Number((r as { cantidad?: number | null }).cantidad ?? 0),
+      });
+    }
+
+    const meses = new Set<string>([...arcaByMes.keys(), ...mlByMes.keys()]);
+    const merged: ConciliacionMes[] = [...meses]
+      .sort((a, b) => b.localeCompare(a))
+      .map((mes) => {
+        const a = arcaByMes.get(mes) ?? { totalArca: 0, cantArca: 0 };
+        const m = mlByMes.get(mes) ?? { totalMl: 0, cantMl: 0 };
+        const diferencia = a.totalArca - m.totalMl;
+        const diferenciaPct = m.totalMl === 0 ? null : (diferencia / m.totalMl) * 100;
+        return {
+          mes,
+          totalArca: a.totalArca,
+          totalMl: m.totalMl,
+          diferencia,
+          diferenciaPct,
+          cantArca: a.cantArca,
+          cantMl: m.cantMl,
+        };
+      });
+    setData(merged);
   }, []);
 
   useEffect(() => {
