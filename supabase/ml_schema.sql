@@ -97,10 +97,12 @@ end $$;
 -- ============================================================
 -- Vista: resumen mensual de ML (espejo de arca_resumen_mensual_v)
 -- ============================================================
+-- Usamos paid_amount porque incluye el envío que pagó el comprador.
+-- total_amount son solo los items sin envío.
 create or replace view public.ml_resumen_mensual_v as
 select
   to_char(date_created at time zone 'America/Argentina/Buenos_Aires', 'YYYY-MM') as mes,
-  sum(total_amount) as total_ml,           -- total que pagó el comprador (item + envío bancado por él)
+  sum(coalesce(paid_amount, total_amount)) as total_ml,
   count(*) as cantidad
 from public.ml_ordenes
 where status in ('paid', 'partially_paid')   -- solo las efectivamente pagadas
