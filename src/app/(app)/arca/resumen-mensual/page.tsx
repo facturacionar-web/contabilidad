@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { formatMoney } from "@/lib/format";
@@ -110,6 +110,25 @@ export default function ResumenMensualArcaPage() {
     );
   }, [resumen]);
 
+  const subtotalesPorAnio = useMemo(() => {
+    const map = new Map<string, { facturas: number; notasDebito: number; notasCredito: number; totalArca: number; cantidad: number }>();
+    if (!resumen) return map;
+    for (const r of resumen) {
+      const anio = r.mes.slice(0, 4);
+      let acc = map.get(anio);
+      if (!acc) {
+        acc = { facturas: 0, notasDebito: 0, notasCredito: 0, totalArca: 0, cantidad: 0 };
+        map.set(anio, acc);
+      }
+      acc.facturas += r.facturas;
+      acc.notasDebito += r.notasDebito;
+      acc.notasCredito += r.notasCredito;
+      acc.totalArca += r.totalArca;
+      acc.cantidad += r.cantidad;
+    }
+    return map;
+  }, [resumen]);
+
   return (
     <div>
       <PageHeader
@@ -192,34 +211,63 @@ export default function ResumenMensualArcaPage() {
               </tr>
             </thead>
             <tbody>
-              {resumen.map((r) => (
-                <tr key={r.mes} className="border-t border-[var(--border)] hover:bg-slate-50">
-                  <td className="px-4 py-2 font-medium">{nombreMes(r.mes)}</td>
-                  <td className="px-4 py-2 text-right tabular-nums">
-                    {formatMoney(r.facturas, "ARS")}
-                  </td>
-                  <td className="px-4 py-2 text-right tabular-nums">
-                    {r.notasDebito ? formatMoney(r.notasDebito, "ARS") : "—"}
-                  </td>
-                  <td className="px-4 py-2 text-right tabular-nums text-red-600">
-                    {r.notasCredito ? `− ${formatMoney(r.notasCredito, "ARS")}` : "—"}
-                  </td>
-                  <td className="px-4 py-2 text-right tabular-nums font-semibold bg-[var(--primary-soft)]/40">
-                    {formatMoney(r.totalArca, "ARS")}
-                  </td>
-                  <td className="px-4 py-2 text-right tabular-nums text-[var(--muted)]">
-                    {r.cantidad}
-                  </td>
-                  <td className="px-4 py-2 text-right">
-                    <Link
-                      href={`/arca/comprobantes?desde=${r.mes}-01&hasta=${r.mes}-31`}
-                      className="inline-flex items-center gap-1 text-xs text-[var(--primary)] hover:underline"
-                    >
-                      Ver detalle <ExternalLink className="w-3 h-3" />
-                    </Link>
-                  </td>
-                </tr>
-              ))}
+              {resumen.map((r, idx) => {
+                const anio = r.mes.slice(0, 4);
+                const proximo = resumen[idx + 1];
+                const esUltimaDelAnio = !proximo || proximo.mes.slice(0, 4) !== anio;
+                const sub = esUltimaDelAnio ? subtotalesPorAnio.get(anio) : undefined;
+                return (
+                  <Fragment key={r.mes}>
+                    <tr className="border-t border-[var(--border)] hover:bg-slate-50">
+                      <td className="px-4 py-2 font-medium">{nombreMes(r.mes)}</td>
+                      <td className="px-4 py-2 text-right tabular-nums">
+                        {formatMoney(r.facturas, "ARS")}
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums">
+                        {r.notasDebito ? formatMoney(r.notasDebito, "ARS") : "—"}
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums text-red-600">
+                        {r.notasCredito ? `− ${formatMoney(r.notasCredito, "ARS")}` : "—"}
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums font-semibold bg-[var(--primary-soft)]/40">
+                        {formatMoney(r.totalArca, "ARS")}
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums text-[var(--muted)]">
+                        {r.cantidad}
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        <Link
+                          href={`/arca/comprobantes?desde=${r.mes}-01&hasta=${r.mes}-31`}
+                          className="inline-flex items-center gap-1 text-xs text-[var(--primary)] hover:underline"
+                        >
+                          Ver detalle <ExternalLink className="w-3 h-3" />
+                        </Link>
+                      </td>
+                    </tr>
+                    {sub && (
+                      <tr className="border-t-2 border-[var(--border)] bg-slate-100 font-medium">
+                        <td className="px-4 py-2">Total {anio}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          {formatMoney(sub.facturas, "ARS")}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums">
+                          {sub.notasDebito ? formatMoney(sub.notasDebito, "ARS") : "—"}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums text-red-600">
+                          {sub.notasCredito ? `− ${formatMoney(sub.notasCredito, "ARS")}` : "—"}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums bg-[var(--primary-soft)]/60">
+                          {formatMoney(sub.totalArca, "ARS")}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums text-[var(--muted)]">
+                          {sub.cantidad}
+                        </td>
+                        <td className="px-4 py-2"></td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
             <tfoot className="bg-slate-50 font-semibold border-t-2 border-[var(--border)]">
               <tr>

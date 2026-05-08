@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { formatMoney } from "@/lib/format";
@@ -112,6 +112,25 @@ export default function ResumenMensualMlPage() {
     return acc;
   }, [data]);
 
+  const subtotalesPorAnio = useMemo(() => {
+    const map = new Map<string, { totalMl: number; porSeller: Record<string, number>; cantidad: number }>();
+    if (!data) return map;
+    for (const r of data) {
+      const anio = r.mes.slice(0, 4);
+      let acc = map.get(anio);
+      if (!acc) {
+        acc = { totalMl: 0, porSeller: {}, cantidad: 0 };
+        map.set(anio, acc);
+      }
+      acc.totalMl += r.totalMl;
+      acc.cantidad += r.cantidad;
+      for (const [k, v] of Object.entries(r.porSeller)) {
+        acc.porSeller[k] = (acc.porSeller[k] ?? 0) + v;
+      }
+    }
+    return map;
+  }, [data]);
+
   return (
     <div>
       <PageHeader
@@ -180,32 +199,59 @@ export default function ResumenMensualMlPage() {
               </tr>
             </thead>
             <tbody>
-              {data.map((r) => (
-                <tr key={r.mes} className="border-t border-[var(--border)] hover:bg-slate-50">
-                  <td className="px-4 py-2 font-medium">{nombreMes(r.mes)}</td>
-                  {sellers.map((s) => (
-                    <td key={s.seller_id} className="px-4 py-2 text-right tabular-nums text-[var(--muted)]">
-                      {r.porSeller[String(s.seller_id)]
-                        ? formatMoney(r.porSeller[String(s.seller_id)], "ARS")
-                        : "—"}
-                    </td>
-                  ))}
-                  <td className="px-4 py-2 text-right tabular-nums font-semibold bg-[var(--primary-soft)]/40">
-                    {formatMoney(r.totalMl, "ARS")}
-                  </td>
-                  <td className="px-4 py-2 text-right tabular-nums text-[var(--muted)]">
-                    {r.cantidad.toLocaleString("es-AR")}
-                  </td>
-                  <td className="px-4 py-2 text-right">
-                    <Link
-                      href={`/arca/ventas-ml?desde=${r.mes}-01&hasta=${r.mes}-31`}
-                      className="inline-flex items-center gap-1 text-xs text-[var(--primary)] hover:underline"
-                    >
-                      Ver detalle <ExternalLink className="w-3 h-3" />
-                    </Link>
-                  </td>
-                </tr>
-              ))}
+              {data.map((r, idx) => {
+                const anio = r.mes.slice(0, 4);
+                const proximo = data[idx + 1];
+                const esUltimaDelAnio = !proximo || proximo.mes.slice(0, 4) !== anio;
+                const sub = esUltimaDelAnio ? subtotalesPorAnio.get(anio) : undefined;
+                return (
+                  <Fragment key={r.mes}>
+                    <tr className="border-t border-[var(--border)] hover:bg-slate-50">
+                      <td className="px-4 py-2 font-medium">{nombreMes(r.mes)}</td>
+                      {sellers.map((s) => (
+                        <td key={s.seller_id} className="px-4 py-2 text-right tabular-nums text-[var(--muted)]">
+                          {r.porSeller[String(s.seller_id)]
+                            ? formatMoney(r.porSeller[String(s.seller_id)], "ARS")
+                            : "—"}
+                        </td>
+                      ))}
+                      <td className="px-4 py-2 text-right tabular-nums font-semibold bg-[var(--primary-soft)]/40">
+                        {formatMoney(r.totalMl, "ARS")}
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums text-[var(--muted)]">
+                        {r.cantidad.toLocaleString("es-AR")}
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        <Link
+                          href={`/arca/ventas-ml?desde=${r.mes}-01&hasta=${r.mes}-31`}
+                          className="inline-flex items-center gap-1 text-xs text-[var(--primary)] hover:underline"
+                        >
+                          Ver detalle <ExternalLink className="w-3 h-3" />
+                        </Link>
+                      </td>
+                    </tr>
+                    {sub && (
+                      <tr className="border-t-2 border-[var(--border)] bg-slate-100 font-medium">
+                        <td className="px-4 py-2">Total {anio}</td>
+                        {sellers.map((s) => (
+                          <td key={s.seller_id} className="px-4 py-2 text-right tabular-nums">
+                            {sub.porSeller[String(s.seller_id)]
+                              ? formatMoney(sub.porSeller[String(s.seller_id)], "ARS")
+                              : "—"}
+                          </td>
+                        ))}
+                        <td className="px-4 py-2 text-right tabular-nums bg-[var(--primary-soft)]/60">
+                          {formatMoney(sub.totalMl, "ARS")}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums text-[var(--muted)]">
+                          {sub.cantidad.toLocaleString("es-AR")}
+                        </td>
+                        <td className="px-4 py-2"></td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
             <tfoot className="bg-slate-50 font-semibold border-t-2 border-[var(--border)]">
               <tr>

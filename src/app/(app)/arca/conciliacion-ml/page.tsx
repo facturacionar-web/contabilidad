@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { formatMoney } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
@@ -163,6 +163,27 @@ export default function ConciliacionMlPage() {
 
   const totalDiffPct = totales.ml === 0 ? null : (totales.diff / totales.ml) * 100;
 
+  const subtotalesPorAnio = useMemo(() => {
+    type Sub = { arca: number; ml: number; diff: number; porSeller: Record<string, number> };
+    const map = new Map<string, Sub>();
+    if (!data) return map;
+    for (const r of data) {
+      const anio = r.mes.slice(0, 4);
+      let acc = map.get(anio);
+      if (!acc) {
+        acc = { arca: 0, ml: 0, diff: 0, porSeller: {} };
+        map.set(anio, acc);
+      }
+      acc.arca += r.totalArca;
+      acc.ml += r.totalMl;
+      acc.diff += r.diferencia;
+      for (const [k, v] of Object.entries(r.porSeller)) {
+        acc.porSeller[k] = (acc.porSeller[k] ?? 0) + v;
+      }
+    }
+    return map;
+  }, [data]);
+
   return (
     <div>
       <PageHeader
@@ -241,39 +262,70 @@ export default function ConciliacionMlPage() {
               </tr>
             </thead>
             <tbody>
-              {data.map((r) => (
-                <tr key={r.mes} className="border-t border-[var(--border)] hover:bg-slate-50">
-                  <td className="px-4 py-2 font-medium">{nombreMes(r.mes)}</td>
-                  <td className="px-4 py-2 text-right tabular-nums">
-                    {formatMoney(r.totalArca, "ARS")}
-                  </td>
-                  {sellers.map((s) => (
-                    <td key={s.seller_id} className="px-4 py-2 text-right tabular-nums text-[var(--muted)]">
-                      {r.porSeller[String(s.seller_id)]
-                        ? formatMoney(r.porSeller[String(s.seller_id)], "ARS")
-                        : "—"}
-                    </td>
-                  ))}
-                  <td className="px-4 py-2 text-right tabular-nums font-semibold">
-                    {formatMoney(r.totalMl, "ARS")}
-                  </td>
-                  <td className={`px-4 py-2 text-right tabular-nums font-medium ${classByDiff(r.diferenciaPct)}`}>
-                    {r.diferencia >= 0 ? "+" : ""}
-                    {formatMoney(r.diferencia, "ARS")}
-                  </td>
-                  <td className={`px-4 py-2 text-right tabular-nums font-semibold ${classByDiff(r.diferenciaPct)}`}>
-                    {r.diferenciaPct === null ? "—" : `${r.diferenciaPct >= 0 ? "+" : ""}${r.diferenciaPct.toFixed(2)}%`}
-                  </td>
-                  <td className="px-4 py-2 text-right">
-                    <Link
-                      href={`/arca/comprobantes?desde=${r.mes}-01&hasta=${r.mes}-31`}
-                      className="inline-flex items-center gap-1 text-xs text-[var(--primary)] hover:underline"
-                    >
-                      Ver ARCA <ExternalLink className="w-3 h-3" />
-                    </Link>
-                  </td>
-                </tr>
-              ))}
+              {data.map((r, idx) => {
+                const anio = r.mes.slice(0, 4);
+                const proximo = data[idx + 1];
+                const esUltimaDelAnio = !proximo || proximo.mes.slice(0, 4) !== anio;
+                const sub = esUltimaDelAnio ? subtotalesPorAnio.get(anio) : undefined;
+                const subPct = sub && sub.ml !== 0 ? (sub.diff / sub.ml) * 100 : null;
+                return (
+                  <Fragment key={r.mes}>
+                    <tr className="border-t border-[var(--border)] hover:bg-slate-50">
+                      <td className="px-4 py-2 font-medium">{nombreMes(r.mes)}</td>
+                      <td className="px-4 py-2 text-right tabular-nums">
+                        {formatMoney(r.totalArca, "ARS")}
+                      </td>
+                      {sellers.map((s) => (
+                        <td key={s.seller_id} className="px-4 py-2 text-right tabular-nums text-[var(--muted)]">
+                          {r.porSeller[String(s.seller_id)]
+                            ? formatMoney(r.porSeller[String(s.seller_id)], "ARS")
+                            : "—"}
+                        </td>
+                      ))}
+                      <td className="px-4 py-2 text-right tabular-nums font-semibold">
+                        {formatMoney(r.totalMl, "ARS")}
+                      </td>
+                      <td className={`px-4 py-2 text-right tabular-nums font-medium ${classByDiff(r.diferenciaPct)}`}>
+                        {r.diferencia >= 0 ? "+" : ""}
+                        {formatMoney(r.diferencia, "ARS")}
+                      </td>
+                      <td className={`px-4 py-2 text-right tabular-nums font-semibold ${classByDiff(r.diferenciaPct)}`}>
+                        {r.diferenciaPct === null ? "—" : `${r.diferenciaPct >= 0 ? "+" : ""}${r.diferenciaPct.toFixed(2)}%`}
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        <Link
+                          href={`/arca/comprobantes?desde=${r.mes}-01&hasta=${r.mes}-31`}
+                          className="inline-flex items-center gap-1 text-xs text-[var(--primary)] hover:underline"
+                        >
+                          Ver ARCA <ExternalLink className="w-3 h-3" />
+                        </Link>
+                      </td>
+                    </tr>
+                    {sub && (
+                      <tr className="border-t-2 border-[var(--border)] bg-slate-100 font-medium">
+                        <td className="px-4 py-2">Total {anio}</td>
+                        <td className="px-4 py-2 text-right tabular-nums">{formatMoney(sub.arca, "ARS")}</td>
+                        {sellers.map((s) => (
+                          <td key={s.seller_id} className="px-4 py-2 text-right tabular-nums">
+                            {sub.porSeller[String(s.seller_id)]
+                              ? formatMoney(sub.porSeller[String(s.seller_id)], "ARS")
+                              : "—"}
+                          </td>
+                        ))}
+                        <td className="px-4 py-2 text-right tabular-nums">{formatMoney(sub.ml, "ARS")}</td>
+                        <td className={`px-4 py-2 text-right tabular-nums ${classByDiff(subPct)}`}>
+                          {sub.diff >= 0 ? "+" : ""}
+                          {formatMoney(sub.diff, "ARS")}
+                        </td>
+                        <td className={`px-4 py-2 text-right tabular-nums ${classByDiff(subPct)}`}>
+                          {subPct === null ? "—" : `${subPct >= 0 ? "+" : ""}${subPct.toFixed(2)}%`}
+                        </td>
+                        <td className="px-4 py-2"></td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
             <tfoot className="bg-slate-50 font-semibold border-t-2 border-[var(--border)]">
               <tr>
