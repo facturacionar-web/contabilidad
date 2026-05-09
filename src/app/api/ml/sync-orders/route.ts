@@ -47,6 +47,15 @@ export async function POST(req: NextRequest) {
       })
       .eq("id", run?.id);
 
+    // Refrescar materialized views si trajimos algo nuevo
+    if (result.ordenesNuevas > 0) {
+      try {
+        await supabase.rpc("refresh_resumen_views");
+      } catch (e) {
+        console.warn("[ml/sync-orders] refresh_resumen_views falló:", String(e));
+      }
+    }
+
     return NextResponse.json({ ok: true, via: auth.via, ...result });
   } catch (err) {
     const msg = String(err);

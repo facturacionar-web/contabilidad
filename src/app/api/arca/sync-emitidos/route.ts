@@ -40,6 +40,15 @@ export async function POST(req: NextRequest) {
       })
       .eq("id", run?.id);
 
+    // Refrescar materialized views si trajimos algo nuevo
+    if (result.comprobantesNuevos > 0) {
+      try {
+        await supabase.rpc("refresh_resumen_views");
+      } catch (e) {
+        console.warn("[arca/sync-emitidos] refresh_resumen_views falló:", String(e));
+      }
+    }
+
     return NextResponse.json({ ok: true, via: auth.via, ...result });
   } catch (err) {
     const msg = String(err);
