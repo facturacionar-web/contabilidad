@@ -74,9 +74,17 @@ const nav: (NavLink | NavGroup)[] = [
     children: [
       { href: "/arca/resumen-mensual", label: "Resumen mensual" },
       { href: "/arca/comprobantes", label: "Comprobantes emitidos" },
-      { href: "/arca/resumen-mensual-ml", label: "Resumen mensual ML" },
-      { href: "/arca/ventas-ml", label: "Ventas Mercado Libre" },
-      { href: "/arca/conciliacion-ml", label: "Conciliación con ML" },
+    ],
+  },
+  {
+    key: "ml",
+    label: "Mercado Libre",
+    icon: Receipt,
+    paises: ["AR"],
+    children: [
+      { href: "/arca/resumen-mensual-ml", label: "Resumen mensual" },
+      { href: "/arca/ventas-ml", label: "Ventas" },
+      { href: "/arca/conciliacion-ml", label: "Conciliación con ARCA" },
     ],
   },
   { href: "/proveedores", label: "Gastos por proveedor", icon: Package },
@@ -99,6 +107,15 @@ function isGroup(item: NavLink | NavGroup): item is NavGroup {
   return "children" in item;
 }
 
+/**
+ * Match exacto o por subpath (segmento completo). Evita que `/foo` se active
+ * cuando estás en `/foo-bar` (que comparte prefijo pero no es subpath real).
+ */
+function isPathActive(pathname: string, href: string): boolean {
+  if (href === "/") return pathname === "/";
+  return pathname === href || pathname.startsWith(href + "/");
+}
+
 export default function Sidebar() {
   const pathname = usePathname();
   const { config } = useConfig();
@@ -117,7 +134,7 @@ export default function Sidebar() {
   for (const item of visibleNav) {
     if (isGroup(item)) {
       initialOpen[item.key] = item.children.some((c) =>
-        pathname.startsWith(c.href)
+        isPathActive(pathname, c.href)
       );
     }
   }
@@ -129,7 +146,7 @@ export default function Sidebar() {
       const next = { ...prev };
       for (const item of visibleNav) {
         if (isGroup(item)) {
-          if (item.children.some((c) => pathname.startsWith(c.href))) {
+          if (item.children.some((c) => isPathActive(pathname, c.href))) {
             next[item.key] = true;
           }
         }
@@ -158,10 +175,7 @@ export default function Sidebar() {
       <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
         {visibleNav.map((item) => {
           if (!isGroup(item)) {
-            const active =
-              item.href === "/"
-                ? pathname === "/"
-                : pathname.startsWith(item.href);
+            const active = isPathActive(pathname, item.href);
             const Icon = item.icon;
             return (
               <Link key={item.href} href={item.href} className={linkClass(active)}>
@@ -175,7 +189,7 @@ export default function Sidebar() {
           const Icon = item.icon;
           const isOpen = open[item.key];
           const groupActive = item.children.some((c) =>
-            pathname.startsWith(c.href)
+            isPathActive(pathname, c.href)
           );
 
           return (
@@ -200,7 +214,7 @@ export default function Sidebar() {
               {isOpen && (
                 <div className="ml-4 mt-0.5 pl-3 border-l border-[var(--border)] space-y-0.5">
                   {item.children.map((child) => {
-                    const childActive = pathname.startsWith(child.href);
+                    const childActive = isPathActive(pathname, child.href);
                     return (
                       <Link
                         key={child.href}
