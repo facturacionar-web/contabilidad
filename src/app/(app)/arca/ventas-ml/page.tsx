@@ -30,7 +30,10 @@ type SyncStatus =
   | { state: "ok"; ordenesNuevas: number }
   | { state: "error"; msg: string };
 
-type StatusFiltro = "todos" | "paid" | "partially_paid" | "cancelled" | "invalid";
+type StatusFiltro = "efectivas" | "todos" | "paid" | "partially_paid" | "partially_refunded" | "cancelled" | "invalid";
+
+// Status que representan plata efectivamente recibida (alinea con el resumen mensual)
+const STATUS_EFECTIVAS = ["paid", "partially_paid", "partially_refunded"] as const;
 
 const PAGE_SIZE = 50;
 const EXPORT_CHUNK = 1000;
@@ -49,6 +52,7 @@ function todayISO(): string {
 function statusLabel(s: string | null): string {
   if (s === "paid") return "Pagada";
   if (s === "partially_paid") return "Parcial";
+  if (s === "partially_refunded") return "Devol. parcial";
   if (s === "cancelled") return "Cancelada";
   if (s === "invalid") return "Inválida";
   return s ?? "—";
@@ -56,7 +60,7 @@ function statusLabel(s: string | null): string {
 
 function statusBadgeClass(s: string | null): string {
   if (s === "paid") return "bg-emerald-100 text-emerald-700";
-  if (s === "partially_paid") return "bg-amber-100 text-amber-700";
+  if (s === "partially_paid" || s === "partially_refunded") return "bg-amber-100 text-amber-700";
   if (s === "cancelled" || s === "invalid") return "bg-red-100 text-red-700";
   return "bg-slate-100 text-slate-700";
 }
@@ -68,7 +72,7 @@ export default function VentasMlPage() {
 
   const [desde, setDesde] = useState(initialDesde);
   const [hasta, setHasta] = useState(initialHasta);
-  const [statusFiltro, setStatusFiltro] = useState<StatusFiltro>("paid");
+  const [statusFiltro, setStatusFiltro] = useState<StatusFiltro>("efectivas");
   const [sellerFiltro, setSellerFiltro] = useState<string>("todos");
   const [buscar, setBuscar] = useState("");
   const [buscarAplicado, setBuscarAplicado] = useState("");
@@ -130,7 +134,9 @@ export default function VentasMlPage() {
       .order("date_closed", { ascending: false })
       .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
-    if (statusFiltro !== "todos") {
+    if (statusFiltro === "efectivas") {
+      query = query.in("status", STATUS_EFECTIVAS as unknown as string[]);
+    } else if (statusFiltro !== "todos") {
       query = query.eq("status", statusFiltro);
     }
     if (sellerFiltro !== "todos") {
@@ -318,11 +324,13 @@ export default function VentasMlPage() {
         <div>
           <label className="block text-xs font-medium text-[var(--muted)] mb-1">Estado</label>
           <select value={statusFiltro} onChange={(e) => setStatusFiltro(e.target.value as StatusFiltro)} className="input">
-            <option value="paid">Pagadas</option>
-            <option value="partially_paid">Parciales</option>
+            <option value="efectivas">Efectivas (pagadas + parciales)</option>
+            <option value="paid">Solo pagadas</option>
+            <option value="partially_paid">Solo parciales pagadas</option>
+            <option value="partially_refunded">Devolución parcial</option>
             <option value="cancelled">Canceladas</option>
             <option value="invalid">Inválidas</option>
-            <option value="todos">Todos</option>
+            <option value="todos">Todos los estados</option>
           </select>
         </div>
         <div>
