@@ -196,6 +196,7 @@ export default function PagosRecibidosPage() {
         ingresoId = inserted.id;
       }
       // Si vino desde Conciliación, vincular este ingreso al movimiento del banco
+      const cameFromConciliacion = conciliarId != null && !editing;
       if (conciliarId && !editing) {
         try {
           const sb = createClient();
@@ -214,6 +215,7 @@ export default function PagosRecibidosPage() {
       }
       await reload();
       setOpen(false);
+      if (cameFromConciliacion) router.push("/conciliacion");
     } catch (err) {
       alert("Error: " + (err as Error).message);
     } finally {

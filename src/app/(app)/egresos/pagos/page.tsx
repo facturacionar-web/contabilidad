@@ -532,6 +532,7 @@ export default function PagosEgresosPage() {
       }
 
       // Si vino desde Conciliación, vinculá el pago al movimiento del banco
+      const cameFromConciliacion = conciliarId != null;
       if (conciliarId) {
         try {
           const sb = createClient();
@@ -551,6 +552,7 @@ export default function PagosEgresosPage() {
 
       await reload();
       setOpen(false);
+      if (cameFromConciliacion) router.push("/conciliacion");
     } catch (err) {
       alert("Error: " + (err as Error).message);
     } finally {
