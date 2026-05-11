@@ -153,6 +153,19 @@ export default function PagosRecibidosPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pais, searchParams]);
 
+  // Cierra el modal y, si vinimos de /conciliacion, navega de vuelta
+  // preservando cuenta+mes. Si fue una edicion normal, solo cierra.
+  function closeModalAndMaybeReturn() {
+    setOpen(false);
+    if (volverCuenta || volverMes) {
+      const qs: string[] = [];
+      if (volverCuenta) qs.push(`cuenta=${encodeURIComponent(volverCuenta)}`);
+      if (volverMes) qs.push(`mes=${encodeURIComponent(volverMes)}`);
+      setVolverCuenta(null); setVolverMes(null); setConciliarId(null);
+      router.push(qs.length > 0 ? `/conciliacion?${qs.join("&")}` : "/conciliacion");
+    }
+  }
+
   function openEdit(i: Ingreso) {
     setEditing(i);
     setForm({
@@ -359,7 +372,7 @@ export default function PagosRecibidosPage() {
         )}
       </div>
 
-      <Modal open={open} onClose={() => setOpen(false)} title={editing ? "Editar ingreso" : "Nuevo pago recibido"} size="lg">
+      <Modal open={open} onClose={closeModalAndMaybeReturn} title={editing ? "Editar ingreso" : "Nuevo pago recibido"} size="lg">
         <form onSubmit={save} className="space-y-4">
           {editing && (
             <EntityMeta entity="ingresos" entityId={editing.id} variant="block" />
@@ -474,7 +487,7 @@ export default function PagosRecibidosPage() {
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
-            <button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancelar</button>
+            <button type="button" className="btn btn-secondary" onClick={closeModalAndMaybeReturn}>Cancelar</button>
             <button type="submit" className="btn btn-primary" disabled={saving}>
               {saving ? "Guardando…" : editing ? "Guardar cambios" : "Registrar ingreso"}
             </button>

@@ -335,6 +335,20 @@ export default function PagosEgresosPage() {
     setOpen(true);
   }
 
+  // Cierra el modal y, si vinimos desde /conciliacion (volverCuenta/Mes
+  // seteados), navega de vuelta preservando cuenta+mes. Si fue una edicion
+  // normal, solo cierra el modal.
+  function closeModalAndMaybeReturn() {
+    setOpen(false);
+    if (volverCuenta || volverMes) {
+      const qs: string[] = [];
+      if (volverCuenta) qs.push(`cuenta=${encodeURIComponent(volverCuenta)}`);
+      if (volverMes) qs.push(`mes=${encodeURIComponent(volverMes)}`);
+      setVolverCuenta(null); setVolverMes(null); setConciliarId(null);
+      router.push(qs.length > 0 ? `/conciliacion?${qs.join("&")}` : "/conciliacion");
+    }
+  }
+
   const displayedFacturas = useMemo(() => {
     if (!preselectedFacturaId || showAllFacturas) return form.facturas_pagadas;
     return form.facturas_pagadas.filter(fp => fp.factura_id === preselectedFacturaId);
@@ -718,7 +732,7 @@ export default function PagosEgresosPage() {
       </div>
 
       {/* ── Modal ── */}
-      <Modal open={open} onClose={() => setOpen(false)} title={editing ? "Editar pago" : "Nuevo pago"} size="xl">
+      <Modal open={open} onClose={closeModalAndMaybeReturn} title={editing ? "Editar pago" : "Nuevo pago"} size="xl">
         <div className="space-y-5">
           {editing && (
             <EntityMeta entity="gastos" entityId={editing.id} variant="block" />
@@ -1001,7 +1015,7 @@ export default function PagosEgresosPage() {
 
           {/* Actions */}
           <div className="flex justify-end gap-2 pt-2 border-t border-[var(--border)]">
-            <button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancelar</button>
+            <button type="button" className="btn btn-secondary" onClick={closeModalAndMaybeReturn}>Cancelar</button>
             <button type="button" className="btn btn-primary" disabled={saving} onClick={handleSave}>
               {saving ? "Guardando…" : "Guardar"}
             </button>
