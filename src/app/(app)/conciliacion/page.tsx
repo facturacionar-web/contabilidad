@@ -27,10 +27,21 @@ import {
 
 type FilterEstado = "pendientes" | "conciliados" | "ignorados" | "todos";
 
+const MES_TODOS = "__todos__";
+const MESES_ES = [
+  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+  "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+];
+function nombreMes(yyyymm: string): string {
+  const [y, m] = yyyymm.split("-");
+  return `${MESES_ES[Number(m) - 1] ?? m} ${y}`;
+}
+
 export default function ConciliacionPage() {
   const { config, country } = useConfig();
   const pais = config?.pais;
   const [cuentaId, setCuentaId] = useState<string>("");
+  const [mesFiltro, setMesFiltro] = useState<string>(""); // "" = sin inicializar, MES_TODOS = todos, "YYYY-MM" = mes específico
   const [importOpen, setImportOpen] = useState(false);
   const [filterEstado, setFilterEstado] = useState<FilterEstado>("pendientes");
   const [busy, setBusy] = useState<number | null>(null);
@@ -79,7 +90,32 @@ export default function ConciliacionPage() {
 
   useEffect(() => { loadMovs(); }, [loadMovs]);
 
-  // Mapas de matched para el matching (excluir los ya emparejados)
+  // Cuando cambia la cuenta, reseteamos el filtro de mes para que el effect
+  // de abajo lo recalcule al mes más reciente de la nueva cuenta.
+  useEffect(() => { setMesFiltro(""); }, [cuentaId]);
+
+  // Meses disponibles (los que tienen movimientos en la cuenta actual), desc.
+  const mesesDisponibles = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of movs) set.add(m.fecha.slice(0, 7));
+    return Array.from(set).sort().reverse();
+  }, [movs]);
+
+  // Al cargar movs, si no hay filtro elegido, defaultear al mes más reciente.
+  useEffect(() => {
+    if (mesFiltro !== "") return;
+    if (mesesDisponibles.length > 0) setMesFiltro(mesesDisponibles[0]);
+    else setMesFiltro(MES_TODOS);
+  }, [mesFiltro, mesesDisponibles]);
+
+  // Movimientos filtrados por mes — base para stats y lista.
+  const movsDelMes = useMemo(() => {
+    if (mesFiltro === "" || mesFiltro === MES_TODOS) return movs;
+    return movs.filter(m => m.fecha.startsWith(mesFiltro));
+  }, [movs, mesFiltro]);
+
+  // Mapas de matched: SIEMPRE sobre todos los movs (cross-month), para que
+  // un pago ya conciliado en marzo no aparezca como candidato en abril.
   const matchedIds = useMemo(() => {
     const pagosIds = new Set<number>();
     const ingresosIds = new Set<number>();
@@ -92,22 +128,22 @@ export default function ConciliacionPage() {
     return { pagos: pagosIds, ingresos: ingresosIds };
   }, [movs]);
 
-  // Filtrar movimientos según estado seleccionado
+  // Filtrar movimientos del mes según estado seleccionado
   const filteredMovs = useMemo(() => {
-    if (filterEstado === "todos") return movs;
-    if (filterEstado === "pendientes") return movs.filter(m => m.estado === "pendiente");
-    if (filterEstado === "conciliados") return movs.filter(m => m.estado === "conciliado");
-    return movs.filter(m => m.estado === "ignorado");
-  }, [movs, filterEstado]);
+    if (filterEstado === "todos") return movsDelMes;
+    if (filterEstado === "pendientes") return movsDelMes.filter(m => m.estado === "pendiente");
+    if (filterEstado === "conciliados") return movsDelMes.filter(m => m.estado === "conciliado");
+    return movsDelMes.filter(m => m.estado === "ignorado");
+  }, [movsDelMes, filterEstado]);
 
-  // Stats
+  // Stats sobre el mes seleccionado
   const stats = useMemo(() => {
-    const totalBanco = movs.reduce((s, m) => s + (m.tipo === "credito" ? Number(m.monto) : -Number(m.monto)), 0);
-    const conciliados = movs.filter(m => m.estado === "conciliado").length;
-    const pendientes = movs.filter(m => m.estado === "pendiente").length;
-    const ignorados = movs.filter(m => m.estado === "ignorado").length;
-    return { totalBanco, conciliados, pendientes, ignorados, total: movs.length };
-  }, [movs]);
+    const totalBanco = movsDelMes.reduce((s, m) => s + (m.tipo === "credito" ? Number(m.monto) : -Number(m.monto)), 0);
+    const conciliados = movsDelMes.filter(m => m.estado === "conciliado").length;
+    const pendientes = movsDelMes.filter(m => m.estado === "pendiente").length;
+    const ignorados = movsDelMes.filter(m => m.estado === "ignorado").length;
+    return { totalBanco, conciliados, pendientes, ignorados, total: movsDelMes.length };
+  }, [movsDelMes]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────
   async function handleImport(parsed: ParsedMovimiento[]) {
@@ -199,9 +235,12 @@ export default function ConciliacionPage() {
   }
 
   async function autoMatchAll() {
-    if (!confirm("Aplicar auto-match a todos los movimientos pendientes? Solo se conciliarán los que tengan match seguro (score ≥ 75).")) return;
+    const scope = mesFiltro === MES_TODOS || mesFiltro === ""
+      ? "todos los movimientos pendientes"
+      : `los movimientos pendientes de ${nombreMes(mesFiltro)}`;
+    if (!confirm(`Aplicar auto-match a ${scope}? Solo se conciliarán los que tengan match seguro (score ≥ 75).`)) return;
     const supabase = createClient();
-    const tasks = movs
+    const tasks = movsDelMes
       .filter(m => m.estado === "pendiente")
       .map(m => {
         const best = findBestMatches(
@@ -331,7 +370,7 @@ export default function ConciliacionPage() {
         )}
       />
 
-      {/* Selector de cuenta */}
+      {/* Selector de cuenta + mes */}
       <div className="card mb-4 flex flex-wrap items-center gap-3">
         <Building2 className="w-5 h-5 text-[var(--primary)]" />
         <span className="text-sm font-medium">Cuenta:</span>
@@ -348,6 +387,21 @@ export default function ConciliacionPage() {
           <span className="text-xs text-slate-400">
             No tenés cuentas. <Link href="/cuentas" className="text-[var(--primary)] hover:underline">Crear una</Link>
           </span>
+        )}
+        {cuentaActiva && mesesDisponibles.length > 0 && (
+          <>
+            <span className="text-sm font-medium ml-2">Mes:</span>
+            <select
+              value={mesFiltro || MES_TODOS}
+              onChange={e => setMesFiltro(e.target.value)}
+              className="select w-auto"
+            >
+              <option value={MES_TODOS}>Todos los meses</option>
+              {mesesDisponibles.map(m => (
+                <option key={m} value={m}>{nombreMes(m)}</option>
+              ))}
+            </select>
+          </>
         )}
       </div>
 
@@ -396,7 +450,7 @@ export default function ConciliacionPage() {
         <div className="flex items-center justify-center py-16">
           <Loader2 className="w-6 h-6 animate-spin text-[var(--muted)]" />
         </div>
-      ) : stats.total === 0 ? (
+      ) : movs.length === 0 ? (
         <div className="card flex flex-col items-center justify-center py-16 text-center">
           <Upload className="w-10 h-10 text-slate-300 mb-3" />
           <p className="font-medium text-slate-600 mb-1">No hay movimientos importados aún</p>
@@ -404,6 +458,14 @@ export default function ConciliacionPage() {
           <button onClick={() => setImportOpen(true)} className="btn btn-primary">
             <Upload className="w-4 h-4" /> Importar extracto
           </button>
+        </div>
+      ) : stats.total === 0 ? (
+        <div className="card flex flex-col items-center justify-center py-12 text-center">
+          <CheckCircle2 className="w-10 h-10 text-slate-300 mb-3" />
+          <p className="text-sm text-slate-500">
+            Sin movimientos en {mesFiltro && mesFiltro !== MES_TODOS ? nombreMes(mesFiltro) : "este filtro"}.
+          </p>
+          <p className="text-xs text-slate-400 mt-1">Probá cambiar el mes o importar un extracto.</p>
         </div>
       ) : filteredMovs.length === 0 ? (
         <div className="card flex flex-col items-center justify-center py-12 text-center">
