@@ -87,6 +87,15 @@ const nav: (NavLink | NavGroup)[] = [
     ],
   },
   {
+    key: "falabella",
+    label: "Falabella",
+    icon: Receipt,
+    paises: ["CL"],
+    children: [
+      { href: "/falabella/ventas", label: "Ventas" },
+    ],
+  },
+  {
     key: "ml",
     label: "Mercado Libre",
     icon: Receipt,
