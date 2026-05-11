@@ -83,6 +83,7 @@ const nav: (NavLink | NavGroup)[] = [
     paises: ["CL"],
     children: [
       { href: "/sii/resumen-mensual", label: "Resumen mensual" },
+      { href: "/sii/comprobantes", label: "Comprobantes emitidos" },
     ],
   },
   {
