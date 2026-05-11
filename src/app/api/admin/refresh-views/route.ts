@@ -16,14 +16,35 @@ export async function POST(req: NextRequest) {
   }
   const { supabase } = auth;
 
-  try {
-    const t0 = Date.now();
-    const { error } = await supabase.rpc("refresh_resumen_views");
-    if (error) {
-      return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-    }
-    return NextResponse.json({ ok: true, via: auth.via, ms: Date.now() - t0 });
-  } catch (err) {
-    return NextResponse.json({ ok: false, error: String(err) }, { status: 500 });
+  // Refrescamos cada MV en su propia llamada PostgREST para que cada
+  // una tenga su propio timeout del API gateway (~10s). Antes se hacía
+  // en una sola RPC y la suma de los 3 pegaba contra el límite.
+  const fns = [
+    "refresh_arca_resumen_mensual",
+    "refresh_ml_resumen_mensual",
+    "refresh_ml_resumen_mensual_seller",
+  ] as const;
+
+  const t0 = Date.now();
+  const timings: Record<string, number> = {};
+  const errors: Record<string, string> = {};
+
+  for (const fn of fns) {
+    const ti = Date.now();
+    const { error } = await supabase.rpc(fn);
+    timings[fn] = Date.now() - ti;
+    if (error) errors[fn] = error.message;
   }
+
+  const failed = Object.keys(errors).length > 0;
+  return NextResponse.json(
+    {
+      ok: !failed,
+      via: auth.via,
+      ms: Date.now() - t0,
+      timings,
+      ...(failed ? { errors } : {}),
+    },
+    { status: failed ? 500 : 200 },
+  );
 }

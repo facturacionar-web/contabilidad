@@ -40,16 +40,20 @@ export async function POST(req: NextRequest) {
       })
       .eq("id", run?.id);
 
-    // Refrescar materialized views si trajimos algo nuevo
+    // Refrescar la MV del resumen mensual si trajimos algo nuevo.
+    // supabase.rpc() NO tira excepciones — devuelve { error } —, así que
+    // hay que chequearlo explícitamente. Sin esto el endpoint reportaba
+    // "ok" aunque el refresh fallara y el resumen quedaba desactualizado.
+    let refreshError: string | null = null;
     if (result.comprobantesNuevos > 0) {
-      try {
-        await supabase.rpc("refresh_resumen_views");
-      } catch (e) {
-        console.warn("[arca/sync-emitidos] refresh_resumen_views falló:", String(e));
+      const { error } = await supabase.rpc("refresh_arca_resumen_mensual");
+      if (error) {
+        refreshError = error.message;
+        console.error("[arca/sync-emitidos] refresh_arca_resumen_mensual falló:", error.message);
       }
     }
 
-    return NextResponse.json({ ok: true, via: auth.via, ...result });
+    return NextResponse.json({ ok: true, via: auth.via, refreshError, ...result });
   } catch (err) {
     const msg = String(err);
     await supabase

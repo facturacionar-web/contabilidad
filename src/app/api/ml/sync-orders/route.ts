@@ -47,16 +47,27 @@ export async function POST(req: NextRequest) {
       })
       .eq("id", run?.id);
 
-    // Refrescar materialized views si trajimos algo nuevo
+    // Refrescar las MVs de ML si trajimos algo nuevo.
+    // Las hacemos una por una (no en una sola RPC) para que cada llamada
+    // tenga su propio timeout del API gateway (~10s) — antes se sumaban
+    // y pegaban contra el límite.
+    const refreshErrors: string[] = [];
     if (result.ordenesNuevas > 0) {
-      try {
-        await supabase.rpc("refresh_resumen_views");
-      } catch (e) {
-        console.warn("[ml/sync-orders] refresh_resumen_views falló:", String(e));
+      for (const fn of ["refresh_ml_resumen_mensual", "refresh_ml_resumen_mensual_seller"]) {
+        const { error } = await supabase.rpc(fn);
+        if (error) {
+          refreshErrors.push(`${fn}: ${error.message}`);
+          console.error(`[ml/sync-orders] ${fn} falló:`, error.message);
+        }
       }
     }
 
-    return NextResponse.json({ ok: true, via: auth.via, ...result });
+    return NextResponse.json({
+      ok: true,
+      via: auth.via,
+      refreshError: refreshErrors.length > 0 ? refreshErrors.join(" | ") : null,
+      ...result,
+    });
   } catch (err) {
     const msg = String(err);
     await supabase
