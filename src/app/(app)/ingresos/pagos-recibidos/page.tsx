@@ -67,6 +67,9 @@ export default function PagosRecibidosPage() {
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
   const [conciliarId, setConciliarId] = useState<number | null>(null);
+  // Para volver a /conciliacion con la cuenta+mes original al guardar.
+  const [volverCuenta, setVolverCuenta] = useState<string | null>(null);
+  const [volverMes, setVolverMes] = useState<string | null>(null);
   const searchParams = useSearchParams();
   const router = useRouter();
   const autoOpenedRef = useRef(false);
@@ -126,6 +129,8 @@ export default function PagosRecibidosPage() {
     const cuenta = searchParams.get("cuenta");
     const monto = searchParams.get("monto");
     const conciliar = searchParams.get("conciliar");
+    const volverC = searchParams.get("volver_cuenta");
+    const volverM = searchParams.get("volver_mes");
     autoOpenedRef.current = true;
     openNew();
     if (fecha || cuenta || monto) {
@@ -137,9 +142,12 @@ export default function PagosRecibidosPage() {
       }));
     }
     if (conciliar) setConciliarId(Number(conciliar));
+    if (volverC) setVolverCuenta(volverC);
+    if (volverM) setVolverMes(volverM);
     const params = new URLSearchParams(searchParams.toString());
     params.delete("nuevo"); params.delete("fecha"); params.delete("cuenta");
     params.delete("monto"); params.delete("conciliar");
+    params.delete("volver_cuenta"); params.delete("volver_mes");
     const qs = params.toString();
     router.replace(qs ? `/ingresos/pagos-recibidos?${qs}` : "/ingresos/pagos-recibidos");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -215,7 +223,13 @@ export default function PagosRecibidosPage() {
       }
       await reload();
       setOpen(false);
-      if (cameFromConciliacion) router.push("/conciliacion");
+      if (cameFromConciliacion) {
+        const qs: string[] = [];
+        if (volverCuenta) qs.push(`cuenta=${encodeURIComponent(volverCuenta)}`);
+        if (volverMes) qs.push(`mes=${encodeURIComponent(volverMes)}`);
+        setVolverCuenta(null); setVolverMes(null);
+        router.push(qs.length > 0 ? `/conciliacion?${qs.join("&")}` : "/conciliacion");
+      }
     } catch (err) {
       alert("Error: " + (err as Error).message);
     } finally {

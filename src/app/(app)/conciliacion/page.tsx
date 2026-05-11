@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
+import { useSearchParams, useRouter } from "next/navigation";
 import { useTable, paisFilter } from "@/lib/useSupabaseData";
 import { useConfig } from "@/lib/useConfig";
 import { createClient } from "@/lib/supabase/client";
@@ -40,8 +41,13 @@ function nombreMes(yyyymm: string): string {
 export default function ConciliacionPage() {
   const { config, country } = useConfig();
   const pais = config?.pais;
-  const [cuentaId, setCuentaId] = useState<string>("");
-  const [mesFiltro, setMesFiltro] = useState<string>(""); // "" = sin inicializar, MES_TODOS = todos, "YYYY-MM" = mes específico
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  // Cuenta y mes pueden venir como query params (cuando volvemos desde
+  // /egresos/pagos o /ingresos/pagos-recibidos), para no perder la
+  // posición en la que estaba trabajando.
+  const [cuentaId, setCuentaId] = useState<string>(searchParams.get("cuenta") ?? "");
+  const [mesFiltro, setMesFiltro] = useState<string>(searchParams.get("mes") ?? ""); // "" = sin inicializar, MES_TODOS = todos, "YYYY-MM" = mes específico
   const [importOpen, setImportOpen] = useState(false);
   const [filterEstado, setFilterEstado] = useState<FilterEstado>("pendientes");
   const [busy, setBusy] = useState<number | null>(null);
@@ -58,6 +64,26 @@ export default function ConciliacionPage() {
   const { data: contactos } = useTable("contactos", { filter: paisFilter(pais), skip: !pais, deps: [pais] });
 
   const cuentaActiva = (cuentas ?? []).find(c => c.id === cuentaId);
+
+  // Query string para pasar a /egresos/pagos y /ingresos/pagos-recibidos
+  // y que cuando vuelvan a /conciliacion respeten la cuenta+mes actuales.
+  const volverQS = useMemo(() => {
+    const parts: string[] = [];
+    if (cuentaId) parts.push(`volver_cuenta=${encodeURIComponent(cuentaId)}`);
+    if (mesFiltro) parts.push(`volver_mes=${encodeURIComponent(mesFiltro)}`);
+    return parts.length > 0 ? `&${parts.join("&")}` : "";
+  }, [cuentaId, mesFiltro]);
+
+  // Si vino con ?cuenta=&mes= (vuelta desde crear pago/ingreso), limpiamos
+  // la URL una vez aplicado. El state ya tiene los valores iniciales.
+  useEffect(() => {
+    if (!searchParams.get("cuenta") && !searchParams.get("mes")) return;
+    const p = new URLSearchParams(searchParams.toString());
+    p.delete("cuenta"); p.delete("mes");
+    const qs = p.toString();
+    router.replace(qs ? `/conciliacion?${qs}` : "/conciliacion");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Auto-seleccionar primera cuenta
   useEffect(() => {
@@ -310,11 +336,11 @@ export default function ConciliacionPage() {
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700">
           No hay {mov.tipo === "debito" ? "pagos" : "ingresos"} candidatos en la app.
           {mov.tipo === "debito" ? (
-            <Link href={`/egresos/pagos?nuevo=1&fecha=${mov.fecha}&monto=${mov.monto}&cuenta=${mov.cuenta_id}`} className="ml-1 underline hover:text-amber-900">
+            <Link href={`/egresos/pagos?nuevo=1&fecha=${mov.fecha}&monto=${mov.monto}&cuenta=${mov.cuenta_id}${volverQS}`} className="ml-1 underline hover:text-amber-900">
               Crear pago →
             </Link>
           ) : (
-            <Link href={`/ingresos/pagos-recibidos?nuevo=1&fecha=${mov.fecha}&monto=${mov.monto}&cuenta=${mov.cuenta_id}`} className="ml-1 underline hover:text-amber-900">
+            <Link href={`/ingresos/pagos-recibidos?nuevo=1&fecha=${mov.fecha}&monto=${mov.monto}&cuenta=${mov.cuenta_id}${volverQS}`} className="ml-1 underline hover:text-amber-900">
               Crear ingreso →
             </Link>
           )}
@@ -566,8 +592,8 @@ export default function ConciliacionPage() {
                         )}
                         <Link
                           href={mov.tipo === "debito"
-                            ? `/egresos/pagos?nuevo=1&fecha=${mov.fecha}&monto=${mov.monto}&cuenta=${mov.cuenta_id}&conciliar=${mov.id}`
-                            : `/ingresos/pagos-recibidos?nuevo=1&fecha=${mov.fecha}&monto=${mov.monto}&cuenta=${mov.cuenta_id}&conciliar=${mov.id}`}
+                            ? `/egresos/pagos?nuevo=1&fecha=${mov.fecha}&monto=${mov.monto}&cuenta=${mov.cuenta_id}&conciliar=${mov.id}${volverQS}`
+                            : `/ingresos/pagos-recibidos?nuevo=1&fecha=${mov.fecha}&monto=${mov.monto}&cuenta=${mov.cuenta_id}&conciliar=${mov.id}${volverQS}`}
                           className="btn btn-ghost p-1.5 text-emerald-600"
                           title={mov.tipo === "debito" ? "Crear pago" : "Crear ingreso"}
                         >
