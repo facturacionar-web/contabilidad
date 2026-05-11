@@ -77,6 +77,15 @@ const nav: (NavLink | NavGroup)[] = [
     ],
   },
   {
+    key: "sii",
+    label: "SII",
+    icon: FileText,
+    paises: ["CL"],
+    children: [
+      { href: "/sii/resumen-mensual", label: "Resumen mensual" },
+    ],
+  },
+  {
     key: "ml",
     label: "Mercado Libre",
     icon: Receipt,
