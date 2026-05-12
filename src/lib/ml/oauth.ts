@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { ML_AUTH_URL, ML_TOKEN_URL, getMlCredentials } from "./config";
+import { getAuthUrlFor, ML_TOKEN_URL, getMlCredentials, type MlCountry } from "./config";
 
 export type MlTokens = {
   mlUserId: number;
@@ -12,8 +12,11 @@ export type MlTokens = {
 /**
  * URL para iniciar el flow OAuth. El user va acá, autoriza, y ML redirige
  * al callback con un `code`.
+ *
+ * @param country país donde el user hace login (AR/CL/MX/...). La misma app
+ *                puede autorizar cuentas de cualquier país.
  */
-export function buildAuthorizationUrl(state: string): string {
+export function buildAuthorizationUrl(state: string, country: MlCountry = "AR"): string {
   const { clientId, redirectUri } = getMlCredentials();
   const params = new URLSearchParams({
     response_type: "code",
@@ -21,7 +24,7 @@ export function buildAuthorizationUrl(state: string): string {
     redirect_uri: redirectUri,
     state,
   });
-  return `${ML_AUTH_URL}?${params.toString()}`;
+  return `${getAuthUrlFor(country)}?${params.toString()}`;
 }
 
 /** Intercambia el `code` del callback por access+refresh tokens. */

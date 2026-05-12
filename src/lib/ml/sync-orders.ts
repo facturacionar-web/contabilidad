@@ -148,10 +148,19 @@ export async function syncOrdenesMl(
 }
 
 function mapOrderToRow(userId: string, sellerId: number, o: MlOrder): Record<string, unknown> {
+  // Derivar site_id desde el campo o, si no viene, mapear desde currency.
+  let siteId = o.site_id ?? null;
+  if (!siteId && o.currency_id) {
+    const fromCurrency: Record<string, string> = {
+      ARS: "MLA", CLP: "MLC", MXN: "MLM", BRL: "MLB", COP: "MCO", UYU: "MLU", PEN: "MPE",
+    };
+    siteId = fromCurrency[o.currency_id] ?? null;
+  }
   return {
     user_id: userId,
     ml_order_id: o.id,
     ml_seller_id: sellerId,
+    site_id: siteId,
     date_created: o.date_created,
     date_closed: o.date_closed ?? null,
     status: o.status ?? null,

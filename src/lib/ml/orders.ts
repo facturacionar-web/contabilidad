@@ -9,6 +9,7 @@ export type MlOrder = {
   total_amount: number;
   paid_amount?: number;
   currency_id?: string;
+  site_id?: string;        // MLA | MLC | MLM | ...
   shipping?: { id?: number; cost?: number };
   buyer?: { id?: number; nickname?: string };
   pack_id?: number | null;
@@ -61,8 +62,8 @@ export async function searchOrders(opts: {
   return JSON.parse(text) as SearchResponse;
 }
 
-/** Datos básicos del usuario logueado (útil para confirmar el seller_id). */
-export async function getMe(accessToken: string): Promise<{ id: number; nickname?: string; email?: string }> {
+/** Datos básicos del usuario logueado (útil para confirmar el seller_id + site_id). */
+export async function getMe(accessToken: string): Promise<{ id: number; nickname?: string; email?: string; site_id?: string }> {
   const res = await fetch(`${ML_API_BASE}/users/me`, {
     headers: {
       Accept: "application/json",

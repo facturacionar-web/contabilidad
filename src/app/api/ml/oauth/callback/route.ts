@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
   try {
     const tokens = await exchangeCodeForTokens(code);
 
-    // Confirmar el seller_id contra /users/me (a veces el user_id del token y el seller son distintos)
+    // Confirmar el seller_id contra /users/me. Esto devuelve además site_id (MLA/MLC/MLM/...)
     const me = await getMe(tokens.accessToken);
     if (me.id && me.id !== tokens.mlUserId) {
       tokens.mlUserId = me.id;
@@ -54,7 +54,19 @@ export async function GET(req: NextRequest) {
     const admin = createAdminClient();
     await saveTokens(admin, cronUserId, tokens, me.nickname);
 
-    const target = url.origin + "/arca/resumen-mensual?ml_connected=1&seller=" + tokens.mlUserId;
+    // Guardar site_id si lo trajo /users/me (algunas respuestas lo incluyen)
+    const siteId = (me as { site_id?: string }).site_id;
+    if (siteId) {
+      await admin
+        .from("ml_oauth_cache")
+        .update({ site_id: siteId })
+        .eq("user_id", cronUserId)
+        .eq("ml_user_id", tokens.mlUserId);
+    }
+
+    // Redirigir a la página del país correcto si se conoce
+    const dest = siteId === "MLC" ? "/ventas/mercado-libre" : "/arca/resumen-mensual";
+    const target = url.origin + dest + "?ml_connected=1&seller=" + tokens.mlUserId;
     const redirect = NextResponse.redirect(target);
     redirect.cookies.set("ml_oauth_state", "", { maxAge: 0, path: "/" });
     return redirect;
