@@ -4,27 +4,40 @@ import { createClient } from "@/lib/supabase/client";
 import { formatMoney } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
 import { Loader2, AlertTriangle, Info, ExternalLink } from "lucide-react";
+import { useConfig } from "@/lib/useConfig";
 
 type Seller = { ml_user_id: number; nickname: string | null; site_id: string | null };
 type MesRow = { mes: string; cantidad: number; cant_pagadas: number; cant_canceladas: number; total_bruto: number; total_neto: number };
 
-function nombreMes(yyyymm: string): string {
+// Mapeo país app → ML site_id + vista + currency + label
+const COUNTRY_TO_ML = {
+  CL: { siteId: "MLC", view: "ml_cl_resumen_mensual_v", currency: "CLP" as const, locale: "es-CL", label: "Chile" },
+  MX: { siteId: "MLM", view: "ml_mx_resumen_mensual_v", currency: "MXN" as const, locale: "es-MX", label: "México" },
+} as const;
+
+function nombreMes(yyyymm: string, locale: string): string {
   const [y, m] = yyyymm.split("-");
   const meses = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+  void locale;
   return `${meses[Number(m) - 1] ?? m} ${y}`;
 }
 
 export default function VentasMercadoLibrePage() {
+  const { config } = useConfig();
+  const pais = config?.pais as "CL" | "MX" | undefined;
+  const cfg = pais && pais in COUNTRY_TO_ML ? COUNTRY_TO_ML[pais as "CL" | "MX"] : null;
+
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [rows, setRows] = useState<MesRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
+    if (!cfg) { setLoading(false); return; }
     const supabase = createClient();
     const [sRes, rRes] = await Promise.all([
-      supabase.from("ml_oauth_cache").select("ml_user_id, nickname, site_id").eq("site_id", "MLC"),
-      supabase.from("ml_cl_resumen_mensual_v").select("mes, cantidad, cant_pagadas, cant_canceladas, total_bruto, total_neto").order("mes", { ascending: false }),
+      supabase.from("ml_oauth_cache").select("ml_user_id, nickname, site_id").eq("site_id", cfg.siteId),
+      supabase.from(cfg.view).select("mes, cantidad, cant_pagadas, cant_canceladas, total_bruto, total_neto").order("mes", { ascending: false }),
     ]);
     if (sRes.error) setError(sRes.error.message);
     if (rRes.error) setError((prev) => prev ?? rRes.error!.message);
@@ -38,9 +51,20 @@ export default function VentasMercadoLibrePage() {
       total_neto: Number(r.total_neto ?? 0),
     })) as MesRow[]);
     setLoading(false);
-  }, []);
+  }, [cfg]);
 
   useEffect(() => { load(); }, [load]);
+
+  if (!cfg) {
+    return (
+      <div>
+        <PageHeader title="Mercado Libre — Ventas" />
+        <div className="rounded-lg border border-[var(--border)] p-8 text-center text-[var(--muted)]">
+          Esta página solo está disponible cuando el país activo es Chile o México.
+        </div>
+      </div>
+    );
+  }
 
   const sinConectar = !loading && sellers.length === 0;
   const sinDatos = !loading && sellers.length > 0 && (rows?.length ?? 0) === 0;
@@ -52,11 +76,11 @@ export default function VentasMercadoLibrePage() {
   return (
     <div>
       <PageHeader
-        title="Mercado Libre Chile — Ventas"
-        description="Órdenes sincronizadas desde tu cuenta de Mercado Libre Chile."
+        title={`Mercado Libre ${cfg.label} — Ventas`}
+        description={`Órdenes sincronizadas desde tu cuenta de Mercado Libre ${cfg.label}.`}
         action={
           sinConectar ? null : (
-            <a href="/api/ml/oauth/start?country=CL" className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-[var(--border)] bg-white hover:bg-slate-50">
+            <a href={`/api/ml/oauth/start?country=${pais}`} className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-[var(--border)] bg-white hover:bg-slate-50">
               <ExternalLink className="w-4 h-4" /> Reautorizar
             </a>
           )
@@ -79,12 +103,12 @@ export default function VentasMercadoLibrePage() {
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-6 text-amber-900 flex items-start gap-3">
           <Info className="w-5 h-5 mt-0.5 shrink-0" />
           <div>
-            <div className="font-medium mb-1">Conectá tu cuenta de Mercado Libre Chile</div>
+            <div className="font-medium mb-1">Conectá tu cuenta de Mercado Libre {cfg.label}</div>
             <p className="text-sm mb-3">
-              Hacé click en el botón de abajo para autorizar la app a leer tus órdenes. Vas a ser redirigido al login de mercadolibre.cl. Después de aceptar, volvés acá.
+              Click en el botón para autorizar la app. Te redirige al login de Mercado Libre {cfg.label}.
             </p>
-            <a href="/api/ml/oauth/start?country=CL" className="inline-flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-[var(--primary)] text-white hover:bg-[var(--primary-hover)]">
-              <ExternalLink className="w-4 h-4" /> Conectar Mercado Libre Chile
+            <a href={`/api/ml/oauth/start?country=${pais}`} className="inline-flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-[var(--primary)] text-white hover:bg-[var(--primary-hover)]">
+              <ExternalLink className="w-4 h-4" /> Conectar Mercado Libre {cfg.label}
             </a>
           </div>
         </div>
@@ -124,12 +148,12 @@ export default function VentasMercadoLibrePage() {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.mes} className="border-t border-[var(--border)] hover:bg-slate-50">
-                  <td className="px-4 py-2 font-medium">{nombreMes(r.mes)}</td>
+                  <td className="px-4 py-2 font-medium">{nombreMes(r.mes, cfg.locale)}</td>
                   <td className="px-4 py-2 text-right tabular-nums">{r.cantidad}</td>
                   <td className="px-4 py-2 text-right tabular-nums text-emerald-700">{r.cant_pagadas}</td>
                   <td className="px-4 py-2 text-right tabular-nums text-red-600">{r.cant_canceladas || "—"}</td>
-                  <td className="px-4 py-2 text-right tabular-nums">{formatMoney(r.total_bruto, "CLP", "es-CL")}</td>
-                  <td className="px-4 py-2 text-right tabular-nums font-semibold bg-[var(--primary-soft)]/40">{formatMoney(r.total_neto, "CLP", "es-CL")}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{formatMoney(r.total_bruto, cfg.currency, cfg.locale)}</td>
+                  <td className="px-4 py-2 text-right tabular-nums font-semibold bg-[var(--primary-soft)]/40">{formatMoney(r.total_neto, cfg.currency, cfg.locale)}</td>
                 </tr>
               ))}
             </tbody>
@@ -140,7 +164,7 @@ export default function VentasMercadoLibrePage() {
                 <td className="px-4 py-2"></td>
                 <td className="px-4 py-2"></td>
                 <td className="px-4 py-2"></td>
-                <td className="px-4 py-2 text-right tabular-nums">{formatMoney(totales.total_neto, "CLP", "es-CL")}</td>
+                <td className="px-4 py-2 text-right tabular-nums">{formatMoney(totales.total_neto, cfg.currency, cfg.locale)}</td>
               </tr>
             </tfoot>
           </table>

@@ -99,6 +99,15 @@ const nav: (NavLink | NavGroup)[] = [
     ],
   },
   {
+    key: "ventas-mx",
+    label: "Ventas",
+    icon: Receipt,
+    paises: ["MX"],
+    children: [
+      { href: "/ventas/mercado-libre", label: "Mercado Libre" },
+    ],
+  },
+  {
     key: "ml",
     label: "Mercado Libre",
     icon: Receipt,
