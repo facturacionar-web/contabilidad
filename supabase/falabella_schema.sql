@@ -111,7 +111,7 @@ select
   count(*) filter (where status = 'delivered') as cant_entregadas,
   count(*) filter (where status in ('canceled', 'failed', 'returned')) as cant_canceladas,
   sum(grand_total)      as total_bruto,
-  sum(grand_total) filter (where status not in ('canceled', 'failed')) as total_neto,
+  sum(grand_total) filter (where status not in ('canceled', 'failed', 'returned')) as total_neto,
   sum(voucher_amount)   as total_voucher
 from public.falabella_orders
 group by user_id, to_char(created_at_fb, 'YYYY-MM');
