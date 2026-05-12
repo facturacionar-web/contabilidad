@@ -45,6 +45,17 @@ export async function syncOrdenesMl(
     try {
       const accessToken = await getAccessToken(supabase, userId, sellerId);
 
+      // billing_info solo se necesita para AR (conciliación con ARCA).
+      // En CL/MX agrega ~270ms por orden sin valor → lo saltamos.
+      const { data: cacheRow } = await supabase
+        .from("ml_oauth_cache")
+        .select("site_id")
+        .eq("user_id", userId)
+        .eq("ml_user_id", sellerId)
+        .maybeSingle();
+      const sellerSiteId = (cacheRow?.site_id as string | undefined) ?? null;
+      const traerBilling = sellerSiteId === "MLA";
+
       // Determinar desde qué fecha leer
       const FALLBACK_DESDE = "2026-01-01T00:00:00Z";
       let desde: string = options.desdeOverride ?? FALLBACK_DESDE;
@@ -87,21 +98,22 @@ export async function syncOrdenesMl(
           const row = mapOrderToRow(userId, sellerId, order);
 
           // Llamada extra a /orders/{id}/billing_info para traer DNI/CUIT del
-          // comprador. ML no lo expone en /orders/search por privacidad.
-          // Esto agrega ~270ms por orden.
-          try {
-            const billing = await getBillingInfo(accessToken, order.id);
-            if (billing) {
-              const docNum = billing.doc_number?.replace(/\D/g, "");
-              if (docNum) {
-                row.doc_nro_buyer = Number(docNum);
-                row.doc_tipo_buyer = billing.doc_type ?? null;
+          // comprador. Solo lo necesitamos en AR (conciliación con ARCA).
+          // En CL/MX la saltamos para acelerar 3-4× el sync.
+          if (traerBilling) {
+            try {
+              const billing = await getBillingInfo(accessToken, order.id);
+              if (billing) {
+                const docNum = billing.doc_number?.replace(/\D/g, "");
+                if (docNum) {
+                  row.doc_nro_buyer = Number(docNum);
+                  row.doc_tipo_buyer = billing.doc_type ?? null;
+                }
+                row.billing_synced_at = new Date().toISOString();
               }
-              row.billing_synced_at = new Date().toISOString();
+            } catch (e) {
+              console.warn(`[ml/sync] billing_info ${order.id}: ${String(e)}`);
             }
-          } catch (e) {
-            // No crítico — guardamos la orden sin doc y seguimos
-            console.warn(`[ml/sync] billing_info ${order.id}: ${String(e)}`);
           }
 
           const { error } = await supabase
