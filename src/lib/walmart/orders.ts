@@ -133,16 +133,26 @@ export async function getAllOrders(
  *   + PRODUCT  + IVA del producto
  *   + SHIPPING + IVA del envío (si lo paga el comprador)
  *   − DISCOUNT − IVA del descuento (cupones, vouchers)
- *   + cualquier otro chargeType no-DISCOUNT (FEE, etc.)
+ *
+ * IGNORA:
+ *   - COMMISSION → es comisión que Walmart cobra AL SELLER, no al cliente
+ *   - TAX → es redundante (suma el tax ya incluido en cada charge); sumarlo duplicaría el IVA
  */
+const CHARGE_TYPES_QUE_SUMAN = new Set(["PRODUCT", "SHIPPING"]);
+
 export function calcOrderTotal(order: WalmartOrder): number {
   let total = 0;
   for (const line of toArray(order.orderLines?.orderLine)) {
     for (const ch of toArray(line.charges?.charge)) {
+      const type = ch.chargeType ?? "";
       const amount = Number(ch.chargeAmount?.amount ?? 0);
       const tax = Number(ch.tax?.taxAmount?.amount ?? 0);
-      const signed = ch.chargeType === "DISCOUNT" ? -(amount + tax) : (amount + tax);
-      total += signed;
+      if (type === "DISCOUNT") {
+        total -= (amount + tax);
+      } else if (CHARGE_TYPES_QUE_SUMAN.has(type)) {
+        total += (amount + tax);
+      }
+      // COMMISSION y TAX se ignoran intencionalmente
     }
   }
   return total;
@@ -165,13 +175,15 @@ export function lineQuantity(line: WalmartOrderLine): number {
   return Number(line.orderLineQuantity?.amount ?? 0);
 }
 
-/** Monto de la línea individual (PRODUCT + IVA + SHIPPING − DISCOUNT con sus respectivos IVAs). */
+/** Monto cobrado al cliente por la línea (mismo criterio que calcOrderTotal: PRODUCT + SHIPPING − DISCOUNT con sus IVAs). */
 export function lineProductAmount(line: WalmartOrderLine): number {
   let total = 0;
   for (const ch of toArray(line.charges?.charge)) {
+    const type = ch.chargeType ?? "";
     const amount = Number(ch.chargeAmount?.amount ?? 0);
     const tax = Number(ch.tax?.taxAmount?.amount ?? 0);
-    total += ch.chargeType === "DISCOUNT" ? -(amount + tax) : (amount + tax);
+    if (type === "DISCOUNT") total -= (amount + tax);
+    else if (CHARGE_TYPES_QUE_SUMAN.has(type)) total += (amount + tax);
   }
   return total;
 }
