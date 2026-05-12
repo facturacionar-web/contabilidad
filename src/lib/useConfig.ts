@@ -11,7 +11,19 @@ export function useConfig() {
 
   const load = useCallback(async () => {
     const supabase = createClient();
-    const { data } = await supabase.from("config").select("*");
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    // Si soy sub-usuario, comparto la config del admin (mismo modelo que saveConfig).
+    const effectiveId = (user?.user_metadata?.owner_id as string | undefined) ?? user?.id;
+    if (!effectiveId) {
+      setReady(true);
+      return;
+    }
+    const { data } = await supabase
+      .from("config")
+      .select("*")
+      .eq("user_id", effectiveId);
     if (data && data.length > 0) {
       const rows = data as Config[];
       setAllConfigs(rows);
