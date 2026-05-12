@@ -19,6 +19,12 @@ export function getCredentials() {
   return { clientId, clientSecret };
 }
 
-/** Estados de orden a iterar (Chile solo expone Created y Acknowledged). */
-export const WALMART_STATUSES = ["Created", "Acknowledged"] as const;
+/**
+ * Estados válidos según docs (no iteramos ninguno — la API acepta omitir `status`
+ * y devolver TODAS las órdenes, que es lo que queremos).
+ * Los probé en /v3/orders y los volúmenes para LIBRENTA fueron:
+ *   sin filtro=3013, Created=7, Acknowledged=37, Shipped=90, Delivered=2880, Cancelled=67
+ * (Refunded y PartiallyShipped devolvieron 520 — no soportados en Chile).
+ */
+export const WALMART_STATUSES = ["Created", "Acknowledged", "Shipped", "Delivered", "Cancelled"] as const;
 export type WalmartStatus = (typeof WALMART_STATUSES)[number];

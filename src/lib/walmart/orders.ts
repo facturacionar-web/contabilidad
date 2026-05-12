@@ -55,7 +55,8 @@ function decodeCursor(c: string): string {
 }
 
 export type GetOrdersParams = {
-  status: WalmartStatus;
+  /** Si no se pasa, trae TODOS los estados (recomendado). */
+  status?: WalmartStatus;
   createdStartIso: string;       // "YYYY-MM-DDTHH:MM:SSZ"
   createdEndIso: string;
   limit?: number;                // máx 200
@@ -73,7 +74,7 @@ export async function getOrdersPage(
   params: GetOrdersParams,
 ): Promise<GetOrdersPage> {
   const url = new URL(`${WALMART_BASE_URL}/v3/orders`);
-  url.searchParams.set("status", params.status);
+  if (params.status) url.searchParams.set("status", params.status);
   url.searchParams.set("createdStartDate", params.createdStartIso);
   url.searchParams.set("createdEndDate", params.createdEndIso);
   url.searchParams.set("limit", String(params.limit ?? 200));
@@ -98,22 +99,19 @@ export async function getOrdersPage(
 }
 
 /**
- * Trae TODAS las órdenes en un rango paginando.
- * Para `status` único; si querés ambos (Created + Acknowledged), llamá esta función 2 veces
- * y deduplicá por purchaseOrderId.
+ * Trae TODAS las órdenes de un rango paginando con cursor.
+ * No filtra por status (la API devuelve todos los estados juntos cuando se omite).
  */
-export async function getAllOrdersForStatus(
+export async function getAllOrders(
   accessToken: string,
-  status: WalmartStatus,
   createdStartIso: string,
   createdEndIso: string,
 ): Promise<WalmartOrder[]> {
   const out: WalmartOrder[] = [];
   let cursor: string | undefined = undefined;
-  let safetyCounter = 0;
+  let safety = 0;
   do {
     const page = await getOrdersPage(accessToken, {
-      status,
       createdStartIso,
       createdEndIso,
       limit: 200,
@@ -121,29 +119,8 @@ export async function getAllOrdersForStatus(
     });
     out.push(...page.orders);
     cursor = page.nextCursor ?? undefined;
-    if (++safetyCounter > 500) throw new Error("getAllOrdersForStatus: superado 500 páginas — abortando");
+    if (++safety > 500) throw new Error("getAllOrders: superado 500 páginas — abortando");
   } while (cursor);
-  return out;
-}
-
-/**
- * Trae las órdenes en un rango iterando los 2 estados (Created + Acknowledged) y deduplicando.
- */
-export async function getAllOrders(
-  accessToken: string,
-  createdStartIso: string,
-  createdEndIso: string,
-): Promise<WalmartOrder[]> {
-  const vistos = new Set<string>();
-  const out: WalmartOrder[] = [];
-  for (const status of WALMART_STATUSES) {
-    const batch = await getAllOrdersForStatus(accessToken, status, createdStartIso, createdEndIso);
-    for (const o of batch) {
-      if (!o.purchaseOrderId || vistos.has(o.purchaseOrderId)) continue;
-      vistos.add(o.purchaseOrderId);
-      out.push(o);
-    }
-  }
   return out;
 }
 
