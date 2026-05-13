@@ -182,6 +182,17 @@ export interface ConciliacionMovimiento {
   deleted_at?: string | null;
 }
 
+/**
+ * Vista agregada de liquidaciones futuras de MP (v_mp_calendar_proyeccion).
+ * Una fila por día con la suma neta de los pagos pending.
+ */
+export interface MpCalendarProyeccion {
+  user_id: string;
+  fecha: string;       // YYYY-MM-DD — fecha de liberación
+  cantidad: number;
+  monto: number;
+}
+
 export interface Config {
   user_id: string;
   pais: CountryCode;

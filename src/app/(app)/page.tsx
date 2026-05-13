@@ -53,6 +53,12 @@ export default function Dashboard() {
   });
   const { data: notas } = useTable("notas_credito", { orderBy: "fecha", filter: paisFilter(pais), skip: !pais, deps: [pais] });
   const { data: contactos } = useTable("contactos", { orderBy: "nombre", ascending: true, filter: paisFilter(pais), skip: !pais, deps: [pais] });
+  // Liquidaciones futuras de Mercado Pago (proyección día a día). La vista
+  // v_mp_calendar_proyeccion agrupa los pagos pending por fecha así no
+  // traemos miles de filas al browser.
+  const { data: mpLiquidaciones } = useTable("v_mp_calendar_proyeccion", {
+    orderBy: "fecha", skip: !pais, deps: [pais],
+  });
 
   const inRange = <T extends { fecha: string }>(rows: T[] | undefined) =>
     (rows ?? []).filter((r) => r.fecha >= start && r.fecha <= end);
@@ -234,6 +240,7 @@ export default function Dashboard() {
       <div className="mb-6">
         <CashFlowForecast
           facturas={facturasDB ?? []}
+          liquidaciones={mpLiquidaciones ?? []}
           monedaBase={base as never}
           locale={country.locale}
         />
@@ -242,6 +249,7 @@ export default function Dashboard() {
       <div className="mb-6">
         <PaymentCalendar
           facturas={facturasDB ?? []}
+          liquidaciones={mpLiquidaciones ?? []}
           contactos={contactos ?? []}
           monedaBase={base as never}
           locale={country.locale}

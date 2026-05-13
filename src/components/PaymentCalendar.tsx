@@ -6,11 +6,14 @@ import type { Gasto, Contacto } from "@/lib/types";
 import type { CurrencyCode } from "@/lib/countries";
 import { formatMoney } from "@/lib/format";
 
+type Liquidacion = { fecha: string; monto: number | string; cantidad: number };
+
 type Props = {
   facturas: Gasto[];
   contactos: Contacto[];
   monedaBase: CurrencyCode;
   locale: string;
+  liquidaciones?: Liquidacion[];   // ingresos proyectados (MP) por fecha
 };
 
 const DAY_LABELS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
@@ -38,7 +41,7 @@ function formatCompact(amount: number, currency: CurrencyCode): string {
   return `${sym}${Math.round(amount)}`;
 }
 
-export default function PaymentCalendar({ facturas, contactos, monedaBase, locale }: Props) {
+export default function PaymentCalendar({ facturas, contactos, monedaBase, locale, liquidaciones = [] }: Props) {
   const today = todayLocalISO();
   const [year, setYear] = useState(() => new Date().getFullYear());
   const [month, setMonth] = useState(() => new Date().getMonth());
@@ -67,6 +70,22 @@ export default function PaymentCalendar({ facturas, contactos, monedaBase, local
     }
     return map;
   }, [pendientes]);
+
+  // Liquidaciones MP futuras (ingresos proyectados) por fecha
+  const liquidacionPorFecha = useMemo(() => {
+    const map = new Map<string, { monto: number; cantidad: number }>();
+    for (const l of liquidaciones) {
+      const monto = Number(l.monto);
+      const existing = map.get(l.fecha);
+      if (existing) {
+        existing.monto += monto;
+        existing.cantidad += l.cantidad;
+      } else {
+        map.set(l.fecha, { monto, cantidad: l.cantidad });
+      }
+    }
+    return map;
+  }, [liquidaciones]);
 
   const totalEnBase = (rows: Gasto[]) =>
     rows.reduce((s, g) => {
@@ -138,6 +157,22 @@ export default function PaymentCalendar({ facturas, contactos, monedaBase, local
     return { count: rows.length, total: totalEnBase(rows) };
   }, [pendientes, year, month, monedaBase]);
 
+  // Total a cobrar (liquidaciones MP) del mes mostrado
+  const totalCobrarMes = useMemo(() => {
+    const start = ymd(year, month, 1);
+    const endY = month === 11 ? year + 1 : year;
+    const endM = month === 11 ? 0 : month + 1;
+    const end = ymd(endY, endM, 1);
+    let total = 0, count = 0;
+    for (const [fecha, info] of liquidacionPorFecha) {
+      if (fecha >= start && fecha < end) {
+        total += info.monto;
+        count += info.cantidad;
+      }
+    }
+    return { total, count };
+  }, [liquidacionPorFecha, year, month]);
+
   const vencidas = useMemo(
     () => pendientes.filter(f => (f.fecha_vencimiento as string) < today),
     [pendientes, today]
@@ -156,6 +191,8 @@ export default function PaymentCalendar({ facturas, contactos, monedaBase, local
   const proximas7Total = totalEnBase(proximas7);
 
   const selectedRows = selectedDate ? (porFecha.get(selectedDate) ?? []) : [];
+  const selectedLiq = selectedDate ? liquidacionPorFecha.get(selectedDate) : undefined;
+  const hasSelectedInfo = !!selectedDate && (selectedRows.length > 0 || (selectedLiq && selectedLiq.monto > 0));
 
   // Encontrar el monto máximo del mes para escalar la "intensidad" del color
   const maxDayTotal = useMemo(() => {
@@ -213,16 +250,27 @@ export default function PaymentCalendar({ facturas, contactos, monedaBase, local
         </div>
 
         {/* Stat strip */}
-        <div className="mt-5 grid grid-cols-3 gap-3">
+        <div className="mt-5 grid grid-cols-2 lg:grid-cols-4 gap-3">
           <div className="bg-white/10 backdrop-blur rounded-xl p-3">
             <p className="text-[11px] uppercase tracking-wide text-white/70 font-medium">
-              {MONTH_LABELS[month]} {year}
+              A pagar {MONTH_LABELS[month]}
             </p>
             <p className="text-xl font-bold mt-0.5">
               {formatMoney(totalMes.total, monedaBase, locale)}
             </p>
             <p className="text-[11px] text-white/70 mt-0.5">
               {totalMes.count} vencimiento{totalMes.count !== 1 ? "s" : ""}
+            </p>
+          </div>
+          <div className="bg-emerald-400/20 backdrop-blur rounded-xl p-3 ring-1 ring-emerald-300/30">
+            <p className="text-[11px] uppercase tracking-wide text-white/70 font-medium">
+              A cobrar {MONTH_LABELS[month]}
+            </p>
+            <p className="text-xl font-bold mt-0.5">
+              {formatMoney(totalCobrarMes.total, monedaBase, locale)}
+            </p>
+            <p className="text-[11px] text-white/70 mt-0.5">
+              {totalCobrarMes.count} liquidacion{totalCobrarMes.count !== 1 ? "es" : ""} MP
             </p>
           </div>
           <div className="bg-white/10 backdrop-blur rounded-xl p-3">
@@ -270,10 +318,13 @@ export default function PaymentCalendar({ facturas, contactos, monedaBase, local
         {grid.map((cell) => {
           const rows = porFecha.get(cell.date);
           const totalDay = rows ? totalEnBase(rows) : 0;
+          const liqInfo = liquidacionPorFecha.get(cell.date);
+          const hasLiquidacion = !!liqInfo && liqInfo.monto > 0;
           const isToday = cell.date === today;
           const isPast = cell.date < today;
           const isSelected = cell.date === selectedDate;
           const hasPending = !!rows && rows.length > 0;
+          const hasAny = hasPending || hasLiquidacion;
           const isOverdue = hasPending && isPast && !isToday;
           const isWeekend = (() => {
             const [y, m, d] = cell.date.split("-").map(Number);
@@ -311,6 +362,9 @@ export default function PaymentCalendar({ facturas, contactos, monedaBase, local
               : "bg-amber-50/60";
             amountClass = "text-amber-700";
             badgeClass = "bg-amber-500 text-white";
+          } else if (hasLiquidacion) {
+            // Solo ingreso proyectado: tinte verde claro
+            bgClass = "bg-emerald-50/70";
           } else if (isWeekend && cell.inMonth) {
             bgClass = "bg-slate-50/30";
           }
@@ -323,13 +377,13 @@ export default function PaymentCalendar({ facturas, contactos, monedaBase, local
           return (
             <button
               key={cell.date}
-              onClick={() => hasPending && setSelectedDate(isSelected ? null : cell.date)}
-              disabled={!hasPending}
+              onClick={() => hasAny && setSelectedDate(isSelected ? null : cell.date)}
+              disabled={!hasAny}
               className={`
                 relative min-h-[92px] px-2.5 py-2 border-r border-b border-[var(--border)]
                 text-left transition-all
                 ${bgClass}
-                ${hasPending ? "cursor-pointer hover:brightness-95 hover:shadow-inner" : "cursor-default"}
+                ${hasAny ? "cursor-pointer hover:brightness-95 hover:shadow-inner" : "cursor-default"}
               `}
             >
               <div className="flex items-start justify-between mb-1.5">
@@ -355,10 +409,15 @@ export default function PaymentCalendar({ facturas, contactos, monedaBase, local
               </div>
               {hasPending && (
                 <div className={`text-[12px] font-bold leading-tight ${amountClass}`}>
-                  {formatCompact(totalDay, monedaBase)}
+                  −{formatCompact(totalDay, monedaBase)}
                 </div>
               )}
-              {hasPending && rows.length === 1 && cell.inMonth && (
+              {hasLiquidacion && cell.inMonth && (
+                <div className="text-[12px] font-bold leading-tight text-emerald-600">
+                  +{formatCompact(liqInfo!.monto, monedaBase)}
+                </div>
+              )}
+              {hasPending && !hasLiquidacion && rows.length === 1 && cell.inMonth && (
                 <div className="text-[10px] text-slate-500 mt-0.5 truncate leading-tight">
                   {rows[0].contacto_id ? contactoMap.get(rows[0].contacto_id) ?? "" : ""}
                 </div>
@@ -369,7 +428,7 @@ export default function PaymentCalendar({ facturas, contactos, monedaBase, local
       </div>
 
       {/* ── Detalle del día seleccionado ─────────────────────── */}
-      {selectedDate && selectedRows.length > 0 && (
+      {hasSelectedInfo && selectedDate && (
         <div className="border-t-2 border-[var(--primary)] bg-[var(--surface-2)]">
           <div className="px-6 py-3.5 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -388,11 +447,23 @@ export default function PaymentCalendar({ facturas, contactos, monedaBase, local
                     });
                   })()}
                 </p>
-                <p className="text-xs text-[var(--muted)]">
-                  {selectedRows.length} factura{selectedRows.length !== 1 ? "s" : ""} ·{" "}
-                  <span className="font-semibold text-red-500">
-                    {formatMoney(totalEnBase(selectedRows), monedaBase, locale)}
-                  </span>
+                <p className="text-xs text-[var(--muted)] flex items-center gap-2 flex-wrap">
+                  {selectedRows.length > 0 && (
+                    <span>
+                      {selectedRows.length} factura{selectedRows.length !== 1 ? "s" : ""} ·{" "}
+                      <span className="font-semibold text-red-500">
+                        −{formatMoney(totalEnBase(selectedRows), monedaBase, locale)}
+                      </span>
+                    </span>
+                  )}
+                  {selectedLiq && selectedLiq.monto > 0 && (
+                    <span>
+                      {selectedLiq.cantidad} liquidación{selectedLiq.cantidad !== 1 ? "es" : ""} MP ·{" "}
+                      <span className="font-semibold text-emerald-600">
+                        +{formatMoney(selectedLiq.monto, monedaBase, locale)}
+                      </span>
+                    </span>
+                  )}
                 </p>
               </div>
             </div>
@@ -470,6 +541,10 @@ export default function PaymentCalendar({ facturas, contactos, monedaBase, local
           <span className="flex items-center gap-1.5">
             <span className="w-3 h-3 rounded bg-red-200" />
             Factura vencida
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-3 h-3 rounded bg-emerald-100" />
+            Liquidación MP proyectada
           </span>
           <span className="flex items-center gap-1.5">
             <span className="w-3 h-3 rounded-full bg-[var(--primary)]" />

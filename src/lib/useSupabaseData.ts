@@ -8,6 +8,7 @@ import type {
   NotaCredito,
   Concepto,
   Cuenta,
+  MpCalendarProyeccion,
 } from "./types";
 
 type TableMap = {
@@ -17,6 +18,7 @@ type TableMap = {
   notas_credito: NotaCredito;
   conceptos: Concepto;
   cuentas: Cuenta;
+  v_mp_calendar_proyeccion: MpCalendarProyeccion;
 };
 
 // Tablas que soportan soft delete (tienen columna deleted_at)
