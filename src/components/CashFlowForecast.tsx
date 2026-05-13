@@ -136,7 +136,7 @@ export default function CashFlowForecast({
       <div className="p-5">
         {/* Resumen total */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
-          <div className="bg-red-50 border border-red-100 rounded-lg p-3">
+          <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
             <div className="flex items-center gap-2">
               <TrendingDown className="w-4 h-4 text-red-600" />
               <p className="text-xs text-slate-500 uppercase tracking-wide">A pagar</p>
@@ -149,12 +149,12 @@ export default function CashFlowForecast({
             </p>
           </div>
 
-          <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3">
+          <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3">
             <div className="flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-emerald-600" />
+              <TrendingUp className="w-4 h-4 text-emerald-400" />
               <p className="text-xs text-slate-500 uppercase tracking-wide">A cobrar</p>
             </div>
-            <p className="text-xl font-bold text-emerald-600 mt-1">
+            <p className="text-xl font-bold text-emerald-400 mt-1">
               {formatMoney(totalCobros, monedaBase, locale)}
             </p>
             <p className="text-[11px] text-slate-400 mt-0.5">
@@ -162,12 +162,12 @@ export default function CashFlowForecast({
             </p>
           </div>
 
-          <div className={`border rounded-lg p-3 ${neto >= 0 ? "bg-emerald-50 border-emerald-100" : "bg-red-50 border-red-100"}`}>
+          <div className={`border rounded-lg p-3 ${neto >= 0 ? "bg-emerald-500/10 border-emerald-500/30" : "bg-red-50 border-red-100"}`}>
             <div className="flex items-center gap-2">
-              <Wallet className={`w-4 h-4 ${neto >= 0 ? "text-emerald-600" : "text-red-600"}`} />
+              <Wallet className={`w-4 h-4 ${neto >= 0 ? "text-emerald-400" : "text-red-600"}`} />
               <p className="text-xs text-slate-500 uppercase tracking-wide">Neto proyectado</p>
             </div>
-            <p className={`text-xl font-bold mt-1 ${neto >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+            <p className={`text-xl font-bold mt-1 ${neto >= 0 ? "text-emerald-400" : "text-red-600"}`}>
               {neto >= 0 ? "+" : ""}{formatMoney(neto, monedaBase, locale)}
             </p>
             <p className="text-[11px] text-slate-400 mt-0.5">
@@ -219,7 +219,7 @@ export default function CashFlowForecast({
               </div>
               <div className="text-right space-y-0.5">
                 {b.cobros > 0 && (
-                  <div className="text-xs font-semibold text-emerald-600">+{formatMoney(b.cobros, monedaBase, locale)}</div>
+                  <div className="text-xs font-semibold text-emerald-400">+{formatMoney(b.cobros, monedaBase, locale)}</div>
                 )}
                 {b.total > 0 && (
                   <div className="text-xs font-semibold text-red-500">−{formatMoney(b.total, monedaBase, locale)}</div>

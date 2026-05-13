@@ -363,8 +363,8 @@ export default function PaymentCalendar({ facturas, contactos, monedaBase, local
             amountClass = "text-amber-700";
             badgeClass = "bg-amber-500 text-white";
           } else if (hasLiquidacion) {
-            // Solo ingreso proyectado: tinte verde claro
-            bgClass = "bg-emerald-50/70";
+            // Solo ingreso proyectado: tinte verde translúcido (funciona en light + dark)
+            bgClass = "bg-emerald-500/15";
           } else if (isWeekend && cell.inMonth) {
             bgClass = "bg-slate-50/30";
           }
@@ -413,7 +413,7 @@ export default function PaymentCalendar({ facturas, contactos, monedaBase, local
                 </div>
               )}
               {hasLiquidacion && cell.inMonth && (
-                <div className="text-[12px] font-bold leading-tight text-emerald-600">
+                <div className="text-[12px] font-bold leading-tight text-emerald-400">
                   +{formatCompact(liqInfo!.monto, monedaBase)}
                 </div>
               )}
@@ -459,7 +459,7 @@ export default function PaymentCalendar({ facturas, contactos, monedaBase, local
                   {selectedLiq && selectedLiq.monto > 0 && (
                     <span>
                       {selectedLiq.cantidad} liquidación{selectedLiq.cantidad !== 1 ? "es" : ""} MP ·{" "}
-                      <span className="font-semibold text-emerald-600">
+                      <span className="font-semibold text-emerald-400">
                         +{formatMoney(selectedLiq.monto, monedaBase, locale)}
                       </span>
                     </span>
@@ -543,7 +543,7 @@ export default function PaymentCalendar({ facturas, contactos, monedaBase, local
             Factura vencida
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="w-3 h-3 rounded bg-emerald-100" />
+            <span className="w-3 h-3 rounded bg-emerald-500/40" />
             Liquidación MP proyectada
           </span>
           <span className="flex items-center gap-1.5">
