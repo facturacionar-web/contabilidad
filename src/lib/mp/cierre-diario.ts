@@ -4,7 +4,6 @@ import {
   AR_TZ_OFFSET,
   CONCEPTO_ID_LIQUIDACION_MP,
   CONCEPTO_ID_TRANSFERENCIAS_PROPIAS,
-  DEFAULT_MP_USER_ID,
 } from "./config";
 import { parseAmount, parseReleaseCsv, type ReleaseRow } from "./csv-parser";
 import {
@@ -12,14 +11,16 @@ import {
   requestReleaseReport,
   waitForReportReady,
 } from "./release-report";
+import { listMpSellers, type MpSeller } from "./sellers";
 
-export type CierreDiarioResult = {
-  fecha: string;                       // YYYY-MM-DD del día cerrado
+export type CierreDiarioSellerResult = {
+  mpUserId: number;
+  cuentaNombre: string;
   reportId: number;
   fileName: string;
   filasCsv: number;
   filasInsertadasDetalle: number;
-  netoIngreso: number;                 // ingreso del día (excluye payouts)
+  netoIngreso: number;
   totalPayouts: number;
   cantidadPayouts: number;
   balanceFinal: number | null;
@@ -31,34 +32,79 @@ export type CierreDiarioResult = {
     gastoId: number | null;
     ingresoId: number | null;
   }>;
-  yaCerrado: boolean;                  // true si la fecha ya tenía mp_liquidaciones_diarias
+  yaCerrado: boolean;
   warnings: string[];
 };
 
+export type CierreDiarioResult = {
+  fecha: string;
+  porSeller: CierreDiarioSellerResult[];
+  // Agregados para compatibilidad con clientes que asumen 1 seller:
+  netoIngresoTotal: number;
+  totalPayoutsTotal: number;
+};
+
 /**
- * Cierra contablemente el día `fecha` (YYYY-MM-DD). Idempotente: si ya hay
- * registros, no duplica.
- *
- * Flujo:
- *   1. Verifica si el día ya está cerrado (mp_liquidaciones_diarias).
- *      Si sí → no hace nada y devuelve yaCerrado=true.
- *   2. Pide release_report a MP para el día.
- *   3. Poll hasta processed.
- *   4. Descarga CSV y parsea.
- *   5. Inserta filas en mp_release_detail (upsert por dedup key).
- *   6. Calcula totales: ingreso del día (sin payouts) + lista de payouts.
- *   7. Crea UN ingreso en public.ingresos (cuenta MP) con el neto.
- *   8. Por cada payout: crea registro en mp_withdrawals + gasto (saca de MP)
- *      + ingreso (entra a cuenta destino si CBU mapeada).
- *   9. Inserta mp_liquidaciones_diarias con el link al ingreso.
+ * Cierra contablemente el día `fecha` (YYYY-MM-DD) para TODAS las cuentas MP
+ * con `mp_user_id` configurado en `cuentas`, o solo una si se pasa filter.
+ * Idempotente por seller.
  */
 export async function cerrarDiaMp(
   supabase: SupabaseClient,
   userId: string,
   fechaYmd: string,
+  options: { mpUserId?: number } = {},
 ): Promise<CierreDiarioResult> {
+  let sellers = await listMpSellers(supabase, userId);
+  if (options.mpUserId) {
+    sellers = sellers.filter((s) => s.mpUserId === options.mpUserId);
+  }
+  if (sellers.length === 0) {
+    throw new Error(
+      `No hay cuentas con mp_user_id configurado${options.mpUserId ? ` (filtro mpUserId=${options.mpUserId})` : ""}.`,
+    );
+  }
+
+  const porSeller: CierreDiarioSellerResult[] = [];
+  for (const seller of sellers) {
+    try {
+      const r = await cerrarDiaMpForSeller(supabase, userId, fechaYmd, seller);
+      porSeller.push(r);
+    } catch (err) {
+      porSeller.push({
+        mpUserId: seller.mpUserId,
+        cuentaNombre: seller.cuentaNombre,
+        reportId: 0, fileName: "",
+        filasCsv: 0, filasInsertadasDetalle: 0,
+        netoIngreso: 0, totalPayouts: 0, cantidadPayouts: 0,
+        balanceFinal: null, alegrantIngresoId: null,
+        withdrawals: [],
+        yaCerrado: false,
+        warnings: [`ERROR: ${String(err).slice(0, 400)}`],
+      });
+    }
+  }
+
+  return {
+    fecha: fechaYmd,
+    porSeller,
+    netoIngresoTotal: porSeller.reduce((s, r) => s + r.netoIngreso, 0),
+    totalPayoutsTotal: porSeller.reduce((s, r) => s + r.totalPayouts, 0),
+  };
+}
+
+/**
+ * Flujo de cierre para un solo seller MP. Idempotente: si ya hay registro
+ * en mp_liquidaciones_diarias para (user_id, mp_user_id, fecha), no hace nada.
+ */
+async function cerrarDiaMpForSeller(
+  supabase: SupabaseClient,
+  userId: string,
+  fechaYmd: string,
+  seller: MpSeller,
+): Promise<CierreDiarioSellerResult> {
   const warnings: string[] = [];
-  const mpUserId = DEFAULT_MP_USER_ID;
+  const mpUserId = seller.mpUserId;
 
   // 1) idempotencia
   const { data: yaExiste } = await supabase
@@ -71,11 +117,9 @@ export async function cerrarDiaMp(
 
   if (yaExiste) {
     return {
-      fecha: fechaYmd,
-      reportId: 0,
-      fileName: "",
-      filasCsv: 0,
-      filasInsertadasDetalle: 0,
+      mpUserId, cuentaNombre: seller.cuentaNombre,
+      reportId: 0, fileName: "",
+      filasCsv: 0, filasInsertadasDetalle: 0,
       netoIngreso: Number(yaExiste.total_neto),
       totalPayouts: Number(yaExiste.total_payouts),
       cantidadPayouts: 0,
@@ -93,9 +137,7 @@ export async function cerrarDiaMp(
   const endIso = `${fechaYmd}T23:59:59${AR_TZ_OFFSET}`;
   const requested = await requestReleaseReport(accessToken, beginIso, endIso);
 
-  // 3) poll hasta que el archivo aparezca en /list (status=enabled).
-  // El ID del POST NO es el mismo que aparece en /list — matcheamos por
-  // begin/end (UTC) y date_created >= ts del request.
+  // 3) poll
   const ready = await waitForReportReady(
     accessToken,
     requested.beginUtc,
@@ -107,14 +149,14 @@ export async function cerrarDiaMp(
   const { text, contentType } = await downloadReport(accessToken, ready.file_name);
   if (!text) {
     throw new Error(
-      `Reporte ${ready.file_name} no es CSV (content-type=${contentType}). El formato esperado es CSV — revisar el POST del request.`,
+      `Reporte ${ready.file_name} no es CSV (content-type=${contentType}).`,
     );
   }
   const rows = parseReleaseCsv(text);
 
   // 5) insertar detalle
   const detailRows = rows
-    .filter((r) => r.RECORD_TYPE === "release")  // descartamos "total" final
+    .filter((r) => r.RECORD_TYPE === "release")
     .map((r) => mapRowToDetail(r, userId, mpUserId, fechaYmd, ready.file_name));
 
   let filasInsertadasDetalle = 0;
@@ -128,11 +170,8 @@ export async function cerrarDiaMp(
         ignoreDuplicates: true,
         count: "exact",
       });
-    if (error) {
-      warnings.push(`detalle chunk ${i}: ${error.message}`);
-    } else {
-      filasInsertadasDetalle += count ?? slice.length;
-    }
+    if (error) warnings.push(`detalle chunk ${i}: ${error.message}`);
+    else filasInsertadasDetalle += count ?? slice.length;
   }
 
   // 6) calcular totales y separar payouts
@@ -157,17 +196,13 @@ export async function cerrarDiaMp(
       netoIngreso += credit - debit;
     }
   }
-  // Redondeo a 2 decimales para evitar floats con cola
   netoIngreso = Math.round(netoIngreso * 100) / 100;
   totalPayouts = Math.round(totalPayouts * 100) / 100;
 
   // 7) buscar cuenta MP
   const cuentaMp = await findCuentaMp(supabase, userId, mpUserId);
   if (!cuentaMp) {
-    throw new Error(
-      `No se encontró cuenta MP en public.cuentas con mp_user_id=${mpUserId}. ` +
-        `Correr la migración mp_schema.sql.`,
-    );
+    throw new Error(`Cuenta MP no encontrada para mp_user_id=${mpUserId}`);
   }
 
   // 8) crear ingreso del día (cuenta MP)
@@ -186,22 +221,19 @@ export async function cerrarDiaMp(
         moneda: "ARS",
         metodo_pago: "transferencia",
         referencia: `mp_release_report:${ready.file_name}`,
-        notas: `Cierre ${formatDateAR(fechaYmd)} — ${detailRows.length} mov, balance final $${balanceFinal?.toLocaleString("es-AR") ?? "n/a"}`,
+        notas: `${seller.cuentaNombre} ${formatDateAR(fechaYmd)} — ${detailRows.length} mov, balance final $${balanceFinal?.toLocaleString("es-AR") ?? "n/a"}`,
         ctx_pais: "AR",
         cuenta_id: cuentaMp.id,
         tasa_cambio: 1,
       })
       .select("id")
       .single();
-    if (ingErr) {
-      warnings.push(`insertar ingreso día: ${ingErr.message}`);
-    } else {
-      alegrantIngresoId = Number(ing.id);
-    }
+    if (ingErr) warnings.push(`insertar ingreso día: ${ingErr.message}`);
+    else alegrantIngresoId = Number(ing.id);
   }
 
-  // 9) por cada payout: withdrawals + gasto + ingreso destino
-  const withdrawalsOut: CierreDiarioResult["withdrawals"] = [];
+  // 9) por cada payout
+  const withdrawalsOut: CierreDiarioSellerResult["withdrawals"] = [];
   for (const pr of payoutRows) {
     const monto = parseAmount(pr.NET_DEBIT_AMOUNT);
     const cbu = (pr.PAYOUT_BANK_ACCOUNT_NUMBER || "").trim();
@@ -211,10 +243,9 @@ export async function cerrarDiaMp(
     }
     const cuentaDestino = await findCuentaPorCbu(supabase, userId, cbu);
     if (!cuentaDestino) {
-      warnings.push(`CBU ${cbu} no mapeada a ninguna cuenta. UPDATE cuentas SET cbu='${cbu}' WHERE nombre='...';`);
+      warnings.push(`CBU ${cbu} no mapeada. UPDATE cuentas SET cbu='${cbu}' WHERE nombre='...';`);
     }
 
-    // buscar detail_id del payout (lo necesitamos para el FK)
     const { data: detRow } = await supabase
       .from("mp_release_detail")
       .select("id")
@@ -225,7 +256,6 @@ export async function cerrarDiaMp(
       .eq("source_id", pr.SOURCE_ID || "")
       .maybeSingle();
 
-    // gasto en cuenta MP (sin contacto: es movimiento entre cuentas propias)
     const destinoLabel = cuentaDestino?.nombre ?? `CBU ${cbu.slice(-6)}`;
     const { data: gasto, error: gastoErr } = await supabase
       .from("gastos")
@@ -245,7 +275,7 @@ export async function cerrarDiaMp(
         estado: "pagado",
         metodo_pago: "transferencia",
         monto_pagado: monto,
-        notas: `MP → ${destinoLabel} (source_id ${pr.SOURCE_ID})`,
+        notas: `${seller.cuentaNombre} → ${destinoLabel} (source_id ${pr.SOURCE_ID})`,
         ctx_pais: "AR",
         cuenta_id: cuentaMp.id,
         tasa_cambio: 1,
@@ -254,7 +284,6 @@ export async function cerrarDiaMp(
       .single();
     if (gastoErr) warnings.push(`gasto payout: ${gastoErr.message}`);
 
-    // ingreso en cuenta destino (si CBU está mapeada)
     let ingresoDestinoId: number | null = null;
     if (cuentaDestino) {
       const { data: ing, error: ingErr } = await supabase
@@ -270,7 +299,7 @@ export async function cerrarDiaMp(
           moneda: "ARS",
           metodo_pago: "transferencia",
           referencia: `mp_payout:${pr.SOURCE_ID}`,
-          notas: `Mercado Pago → ${destinoLabel}`,
+          notas: `${seller.cuentaNombre} → ${destinoLabel}`,
           ctx_pais: "AR",
           cuenta_id: cuentaDestino.id,
           tasa_cambio: 1,
@@ -281,7 +310,6 @@ export async function cerrarDiaMp(
       else ingresoDestinoId = Number(ing.id);
     }
 
-    // upsert en mp_withdrawals
     const fechaPayout = pr.DATE
       ? new Date(pr.DATE).toISOString()
       : `${fechaYmd}T00:00:00${AR_TZ_OFFSET}`;
@@ -305,15 +333,14 @@ export async function cerrarDiaMp(
     if (wErr) warnings.push(`mp_withdrawals upsert: ${wErr.message}`);
 
     withdrawalsOut.push({
-      monto,
-      cbu,
+      monto, cbu,
       cuentaDestinoMatched: !!cuentaDestino,
       gastoId: gasto?.id ?? null,
       ingresoId: ingresoDestinoId,
     });
   }
 
-  // 10) link al ingreso desde mp_liquidaciones_diarias
+  // 10) mp_liquidaciones_diarias
   const { error: liqErr } = await supabase.from("mp_liquidaciones_diarias").insert({
     user_id: userId,
     mp_user_id: mpUserId,
@@ -327,7 +354,7 @@ export async function cerrarDiaMp(
   if (liqErr) warnings.push(`mp_liquidaciones_diarias insert: ${liqErr.message}`);
 
   return {
-    fecha: fechaYmd,
+    mpUserId, cuentaNombre: seller.cuentaNombre,
     reportId: requested.id,
     fileName: ready.file_name,
     filasCsv: rows.length,

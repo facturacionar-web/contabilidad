@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
   }
   const { supabase, userId } = auth;
 
-  let body: { diasHaciaAtras?: number; diasHaciaAdelante?: number } = {};
+  let body: { diasHaciaAtras?: number; diasHaciaAdelante?: number; mpUserId?: number } = {};
   try {
     const text = await req.text();
     body = text ? JSON.parse(text) : {};

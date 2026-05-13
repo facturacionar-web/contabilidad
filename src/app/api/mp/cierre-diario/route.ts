@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
   }
   const { supabase, userId } = auth;
 
-  let body: { fecha?: string } = {};
+  let body: { fecha?: string; mpUserId?: number } = {};
   try {
     const text = await req.text();
     body = text ? JSON.parse(text) : {};
@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await cerrarDiaMp(supabase, userId, fecha);
+    const result = await cerrarDiaMp(supabase, userId, fecha, { mpUserId: body.mpUserId });
     return NextResponse.json({ ok: true, via: auth.via, ...result });
   } catch (err) {
     const msg = String(err);

@@ -1,7 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAccessToken } from "@/lib/ml/oauth";
 import { mpJson } from "./api";
-import { AR_TZ_OFFSET, DEFAULT_MP_USER_ID } from "./config";
+import { AR_TZ_OFFSET } from "./config";
+import { listMpSellers, type MpSeller } from "./sellers";
 
 type MpPayment = {
   id: number | string;
@@ -23,27 +24,34 @@ type SearchResp = {
   paging: { total: number; limit: number; offset: number };
 };
 
-export type CalendarSyncResult = {
-  rango: { begin: string; end: string };
+export type CalendarSyncSellerResult = {
+  mpUserId: number;
+  cuentaNombre: string;
   totalApi: number;
   upserted: number;
   errores: string[];
 };
 
+export type CalendarSyncResult = {
+  rango: { begin: string; end: string };
+  totalApi: number;
+  upserted: number;
+  errores: string[];
+  porSeller: CalendarSyncSellerResult[];
+};
+
 /**
- * Refresca `mp_release_calendar` con los pagos cuyo money_release_date cae
- * en el rango [diasHaciaAtras, diasHaciaAdelante]. Default: -7d a +60d.
- *
- * Lógica:
- *  - Trae TODOS los pagos en el rango (sin filtrar status: incluye approved
- *    + in_mediation, validado contra el dashboard al centavo el 13 y 14 de mayo).
- *  - Upsert por mp_payment_id; si un pago se actualiza (release_date cambia,
- *    status cambia), se sobrescribe.
+ * Refresca `mp_release_calendar` para TODAS las cuentas MP configuradas en
+ * `cuentas.mp_user_id` (o solo una si se pasa `mpUserId` filter).
  */
 export async function syncCalendar(
   supabase: SupabaseClient,
   userId: string,
-  options: { diasHaciaAtras?: number; diasHaciaAdelante?: number } = {},
+  options: {
+    diasHaciaAtras?: number;
+    diasHaciaAdelante?: number;
+    mpUserId?: number;     // opcional: filtra a un seller específico
+  } = {},
 ): Promise<CalendarSyncResult> {
   const diasAtras = options.diasHaciaAtras ?? 7;
   const diasAdelante = options.diasHaciaAdelante ?? 60;
@@ -56,10 +64,65 @@ export async function syncCalendar(
   const beginIso = `${begin.toISOString().slice(0, 10)}T00:00:00.000${AR_TZ_OFFSET}`;
   const endIso = `${end.toISOString().slice(0, 10)}T23:59:59.999${AR_TZ_OFFSET}`;
 
-  const mpUserId = DEFAULT_MP_USER_ID;
-  const accessToken = await getAccessToken(supabase, userId, mpUserId);
+  // Sellers a procesar
+  let sellers = await listMpSellers(supabase, userId);
+  if (options.mpUserId) {
+    sellers = sellers.filter((s) => s.mpUserId === options.mpUserId);
+    if (sellers.length === 0) {
+      return {
+        rango: { begin: beginIso, end: endIso },
+        totalApi: 0, upserted: 0,
+        errores: [`mp_user_id ${options.mpUserId} no configurado en cuentas.mp_user_id`],
+        porSeller: [],
+      };
+    }
+  }
+  if (sellers.length === 0) {
+    return {
+      rango: { begin: beginIso, end: endIso },
+      totalApi: 0, upserted: 0,
+      errores: ["no hay cuentas con mp_user_id configurado"],
+      porSeller: [],
+    };
+  }
 
+  const porSeller: CalendarSyncSellerResult[] = [];
+  let totalApiSum = 0;
+  let upsertedSum = 0;
+  const erroresGlobal: string[] = [];
+
+  for (const seller of sellers) {
+    const r = await syncCalendarForSeller(supabase, userId, seller, beginIso, endIso);
+    porSeller.push(r);
+    totalApiSum += r.totalApi;
+    upsertedSum += r.upserted;
+    if (r.errores.length > 0) {
+      for (const e of r.errores) erroresGlobal.push(`[${seller.cuentaNombre}] ${e}`);
+    }
+  }
+
+  return { rango: { begin: beginIso, end: endIso }, totalApi: totalApiSum, upserted: upsertedSum, errores: erroresGlobal, porSeller };
+}
+
+async function syncCalendarForSeller(
+  supabase: SupabaseClient,
+  userId: string,
+  seller: MpSeller,
+  beginIso: string,
+  endIso: string,
+): Promise<CalendarSyncSellerResult> {
   const errores: string[] = [];
+  let accessToken: string;
+  try {
+    accessToken = await getAccessToken(supabase, userId, seller.mpUserId);
+  } catch (err) {
+    return {
+      mpUserId: seller.mpUserId, cuentaNombre: seller.cuentaNombre,
+      totalApi: 0, upserted: 0,
+      errores: [`OAuth: ${String(err).slice(0, 200)}`],
+    };
+  }
+
   const todos: MpPayment[] = [];
   const limit = 50;
   let offset = 0;
@@ -88,35 +151,31 @@ export async function syncCalendar(
     }
   }
 
-  // Dedup por mp_payment_id (la API puede traer el mismo pago 2 veces si se
-  // actualizó durante la paginación) — nos quedamos con la última versión.
+  // Dedup por mp_payment_id
   const byId = new Map<number, MpPayment>();
   for (const p of todos) {
     if (!p.money_release_date) continue;
     byId.set(Number(p.id), p);
   }
 
-  // upsert en chunks
-  const rows = Array.from(byId.values())
-    .map((p) => {
-      const releaseAt = new Date(p.money_release_date as string);
-      const fechaLib = ymdLocal(releaseAt);
-      return {
-        user_id: userId,
-        mp_payment_id: Number(p.id),
-        mp_user_id: Number(p.collector_id ?? mpUserId),
-        fecha_liberacion: fechaLib,
-        money_release_at: releaseAt.toISOString(),
-        net_received_amount: numOr0(p.transaction_details?.net_received_amount),
-        transaction_amount: numOr0(p.transaction_amount),
-        payment_status: p.status,
-        money_release_status: p.money_release_status ?? "pending",
-        operation_type: p.operation_type ?? null,
-        external_reference: p.external_reference ?? null,
-        date_created: p.date_created ?? null,
-        updated_at: new Date().toISOString(),
-      };
-    });
+  const rows = Array.from(byId.values()).map((p) => {
+    const releaseAt = new Date(p.money_release_date as string);
+    return {
+      user_id: userId,
+      mp_payment_id: Number(p.id),
+      mp_user_id: Number(p.collector_id ?? seller.mpUserId),
+      fecha_liberacion: ymdLocal(releaseAt),
+      money_release_at: releaseAt.toISOString(),
+      net_received_amount: numOr0(p.transaction_details?.net_received_amount),
+      transaction_amount: numOr0(p.transaction_amount),
+      payment_status: p.status,
+      money_release_status: p.money_release_status ?? "pending",
+      operation_type: p.operation_type ?? null,
+      external_reference: p.external_reference ?? null,
+      date_created: p.date_created ?? null,
+      updated_at: new Date().toISOString(),
+    };
+  });
 
   let upserted = 0;
   const CHUNK = 500;
@@ -125,14 +184,11 @@ export async function syncCalendar(
     const { error } = await supabase
       .from("mp_release_calendar")
       .upsert(slice, { onConflict: "user_id,mp_payment_id" });
-    if (error) {
-      errores.push(`upsert chunk ${i}: ${error.message}`);
-    } else {
-      upserted += slice.length;
-    }
+    if (error) errores.push(`upsert chunk ${i}: ${error.message}`);
+    else upserted += slice.length;
   }
 
-  return { rango: { begin: beginIso, end: endIso }, totalApi: total, upserted, errores };
+  return { mpUserId: seller.mpUserId, cuentaNombre: seller.cuentaNombre, totalApi: total, upserted, errores };
 }
 
 function numOr0(x: unknown): number {
@@ -142,8 +198,7 @@ function numOr0(x: unknown): number {
 
 /** YYYY-MM-DD en local AR (offset -03:00). */
 function ymdLocal(d: Date): string {
-  // Convertimos manualmente para evitar problemas con TZ del runtime (Railway = UTC).
-  const offsetMs = 3 * 60 * 60 * 1000; // AR es UTC-3 (sin DST)
+  const offsetMs = 3 * 60 * 60 * 1000;
   const adjusted = new Date(d.getTime() - offsetMs);
   return adjusted.toISOString().slice(0, 10);
 }
