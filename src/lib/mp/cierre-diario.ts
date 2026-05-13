@@ -161,18 +161,12 @@ export async function cerrarDiaMp(
   netoIngreso = Math.round(netoIngreso * 100) / 100;
   totalPayouts = Math.round(totalPayouts * 100) / 100;
 
-  // 7) buscar cuenta MP y contacto Librenta
+  // 7) buscar cuenta MP
   const cuentaMp = await findCuentaMp(supabase, userId, mpUserId);
   if (!cuentaMp) {
     throw new Error(
       `No se encontró cuenta MP en public.cuentas con mp_user_id=${mpUserId}. ` +
         `Correr la migración mp_schema.sql.`,
-    );
-  }
-  const contactoLibrenta = await findContactoLibrenta(supabase, userId);
-  if (!contactoLibrenta) {
-    throw new Error(
-      `No se encontró contacto 'LIBRENTA LIBROS SAU' como proveedor. Correr mp_schema.sql.`,
     );
   }
 
@@ -231,7 +225,7 @@ export async function cerrarDiaMp(
       .eq("source_id", pr.SOURCE_ID || "")
       .maybeSingle();
 
-    // gasto en cuenta MP
+    // gasto en cuenta MP (sin contacto: es movimiento entre cuentas propias)
     const destinoLabel = cuentaDestino?.nombre ?? `CBU ${cbu.slice(-6)}`;
     const { data: gasto, error: gastoErr } = await supabase
       .from("gastos")
@@ -239,7 +233,7 @@ export async function cerrarDiaMp(
         user_id: userId,
         fecha: fechaYmd,
         tipo: "gasto",
-        contacto_id: contactoLibrenta.id,
+        contacto_id: null,
         concepto: "Transferencias a cuentas propias",
         categoria: "Transferencias a cuentas propias",
         concepto_id: CONCEPTO_ID_TRANSFERENCIAS_PROPIAS,
@@ -415,20 +409,6 @@ async function findCuentaPorCbu(
     .eq("user_id", userId)
     .eq("cbu", cbu)
     .is("deleted_at", null)
-    .limit(1)
-    .maybeSingle();
-  return data ?? null;
-}
-
-async function findContactoLibrenta(
-  supabase: SupabaseClient,
-  userId: string,
-): Promise<{ id: number } | null> {
-  const { data } = await supabase
-    .from("contactos")
-    .select("id")
-    .eq("user_id", userId)
-    .eq("tax_id", "30715103946")
     .limit(1)
     .maybeSingle();
   return data ?? null;

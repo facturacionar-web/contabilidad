@@ -320,7 +320,6 @@ export default function PagosRecibidosPage() {
               <tr>
                 <th className="text-center w-10">#</th>
                 <th>Fecha</th>
-                <th>Descripción</th>
                 <th>Concepto</th>
                 <th>Cliente</th>
                 <th>Cuenta</th>
@@ -334,9 +333,8 @@ export default function PagosRecibidosPage() {
                 <tr key={i.id}>
                   <td className="text-center text-[var(--muted)] font-medium">{i.id}</td>
                   <td className="whitespace-nowrap">{formatDate(i.fecha, country.locale)}</td>
-                  <td className="font-medium max-w-xs truncate">{i.concepto}</td>
-                  <td className="text-[var(--muted)]">
-                    {conceptosAll?.find((c) => c.id === i.concepto_id)?.nombre ?? i.categoria ?? "—"}
+                  <td className="font-medium max-w-xs truncate">
+                    {conceptosAll?.find((c) => c.id === i.concepto_id)?.nombre ?? i.categoria ?? i.concepto ?? "—"}
                   </td>
                   <td className="text-[var(--muted)]">
                     {i.contacto_id
