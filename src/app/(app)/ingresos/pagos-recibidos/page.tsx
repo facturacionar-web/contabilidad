@@ -186,7 +186,8 @@ export default function PagosRecibidosPage() {
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.concepto.trim() || form.monto <= 0) return;
+    if (!form.concepto_id || form.monto <= 0) return;
+    const conceptoNombre = conceptos.find((c) => c.id === form.concepto_id)?.nombre ?? "";
     setSaving(true);
     try {
       const payload = {
@@ -194,11 +195,9 @@ export default function PagosRecibidosPage() {
         fecha: form.fecha,
         tipo: "ingreso_dinero" as const,
         contacto_id: form.contacto_id === "" ? null : Number(form.contacto_id),
-        concepto: form.concepto,
-        categoria: form.concepto_id
-          ? (conceptos.find((c) => c.id === form.concepto_id)?.nombre ?? "")
-          : "",
-        concepto_id: form.concepto_id || null,
+        concepto: conceptoNombre,
+        categoria: conceptoNombre,
+        concepto_id: form.concepto_id,
         cuenta_id: form.cuenta_id || null,
         monto: form.monto,
         moneda: form.moneda,
@@ -291,7 +290,7 @@ export default function PagosRecibidosPage() {
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
             <input
               className="input pl-9 sm:w-72"
-              placeholder="Buscar por descripción…"
+              placeholder="Buscar por concepto…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -390,21 +389,15 @@ export default function PagosRecibidosPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="label">Descripción *</label>
-              <input className="input" placeholder="Detalle del cobro…" value={form.concepto} onChange={(e) => setForm({ ...form, concepto: e.target.value })} required />
-            </div>
-            <div>
-              <label className="label">Concepto</label>
-              <SearchableSelect
-                value={form.concepto_id}
-                onChange={v => setForm({ ...form, concepto_id: v })}
-                options={conceptos.map(c => ({ value: c.id, label: c.nombre }))}
-                placeholder="— Sin concepto —"
-                emptyLabel="— Sin concepto —"
-              />
-            </div>
+          <div>
+            <label className="label">Concepto *</label>
+            <SearchableSelect
+              value={form.concepto_id}
+              onChange={v => setForm({ ...form, concepto_id: v })}
+              options={conceptos.map(c => ({ value: c.id, label: c.nombre }))}
+              placeholder="Elegí un concepto…"
+              emptyLabel="— No hay conceptos para ingresos —"
+            />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -488,7 +481,7 @@ export default function PagosRecibidosPage() {
 
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" className="btn btn-secondary" onClick={closeModalAndMaybeReturn}>Cancelar</button>
-            <button type="submit" className="btn btn-primary" disabled={saving}>
+            <button type="submit" className="btn btn-primary" disabled={saving || !form.concepto_id || form.monto <= 0}>
               {saving ? "Guardando…" : editing ? "Guardar cambios" : "Registrar ingreso"}
             </button>
           </div>
