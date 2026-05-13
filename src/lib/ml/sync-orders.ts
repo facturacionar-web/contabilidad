@@ -75,6 +75,8 @@ export async function syncOrdenesMl(
       let nuevasEsteSeller = 0;
       let ultimaFechaProcesada = desde;  // cursor por date_created (limitación ML)
       let offset = 0;
+      let ultimoCheckpointEscrito = checkpointInicial ?? "";
+      const CHECKPOINT_CADA = 500;  // persistir checkpoint cada 500 órdenes para no perder progreso
 
       while (nuevasEsteSeller < maxPorTanda) {
         const resp = await searchOrders({
@@ -126,6 +128,19 @@ export async function syncOrdenesMl(
           }
           nuevasEsteSeller += 1;
           ultimaFechaProcesada = order.date_created;
+
+          // Persistir checkpoint periódicamente: si el script muere a mitad de un seller
+          // grande, la próxima corrida arranca donde quedó (no desde cero).
+          if (nuevasEsteSeller > 0 && nuevasEsteSeller % CHECKPOINT_CADA === 0 && ultimaFechaProcesada !== ultimoCheckpointEscrito) {
+            await supabase.from("ml_sync_checkpoint").upsert({
+              user_id: userId,
+              ml_seller_id: sellerId,
+              ultima_fecha_sincronizada: ultimaFechaProcesada,
+              updated_at: new Date().toISOString(),
+            });
+            ultimoCheckpointEscrito = ultimaFechaProcesada;
+          }
+
           if (nuevasEsteSeller >= maxPorTanda) break;
         }
 
