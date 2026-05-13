@@ -57,7 +57,7 @@ export default function Dashboard() {
   // v_mp_calendar_proyeccion agrupa los pagos pending por fecha así no
   // traemos miles de filas al browser.
   const { data: mpLiquidaciones } = useTable("v_mp_calendar_proyeccion", {
-    orderBy: "fecha", skip: !pais, deps: [pais],
+    orderBy: "fecha", filter: paisFilter(pais), skip: !pais, deps: [pais],
   });
 
   const inRange = <T extends { fecha: string }>(rows: T[] | undefined) =>

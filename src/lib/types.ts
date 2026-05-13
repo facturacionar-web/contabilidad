@@ -188,6 +188,7 @@ export interface ConciliacionMovimiento {
  */
 export interface MpCalendarProyeccion {
   user_id: string;
+  ctx_pais: string;    // contexto país derivado de la cuenta MP asociada
   fecha: string;       // YYYY-MM-DD — fecha de liberación
   cantidad: number;
   monto: number;
