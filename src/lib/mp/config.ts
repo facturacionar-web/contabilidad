@@ -34,13 +34,3 @@ export const AR_TZ_OFFSET = "-03:00";
  */
 export const CONCEPTO_ID_LIQUIDACION_MP = "d4eaa52f-4526-4845-b955-c457cf071efb";       // "Liquidacion diaria MP"
 export const CONCEPTO_ID_TRANSFERENCIAS_PROPIAS = "ed8a260c-8264-4f55-a689-aa1b8c0b4d99"; // "Transferencias a cuentas propias"
-export const CONCEPTO_ID_IMPUESTO_DEB_CRED = "e24ce24e-2b1d-4a17-b485-0f49a2ee72fa";    // "Impuesto debitos y creditos"
-
-/**
- * Alícuota del impuesto a los débitos y créditos bancarios (Argentina).
- * 0.6% por defecto. Cuando MP debita un pago a un destino que NO es una cuenta
- * propia (= pago a proveedor), el monto debitado incluye este impuesto.
- *   monto_factura = monto_payout / (1 + IMPUESTO_DEB_CRED_RATE)
- *   impuesto      = monto_payout - monto_factura
- */
-export const IMPUESTO_DEB_CRED_RATE = 0.006;

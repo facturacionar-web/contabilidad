@@ -2,10 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAccessToken } from "@/lib/ml/oauth";
 import {
   AR_TZ_OFFSET,
-  CONCEPTO_ID_IMPUESTO_DEB_CRED,
   CONCEPTO_ID_LIQUIDACION_MP,
   CONCEPTO_ID_TRANSFERENCIAS_PROPIAS,
-  IMPUESTO_DEB_CRED_RATE,
 } from "./config";
 import { parseAmount, parseReleaseCsv, type ReleaseRow } from "./csv-parser";
 import {
@@ -308,36 +306,12 @@ async function cerrarDiaMpForSeller(
       if (ingErr) warnings.push(`ingreso destino transfer: ${ingErr.message}`);
       else ingresoDestinoId = Number(ing.id);
     } else {
-      // ── PAYOUT A DESTINO EXTERNO (pago a proveedor, etc.)
-      // El monto debitado por MP = factura + impuesto a débitos/créditos.
-      // El usuario carga la factura manualmente; el cron solo registra el
-      // impuesto, así no se duplica el egreso.
-      const sinImpuesto = Math.round((monto / (1 + IMPUESTO_DEB_CRED_RATE)) * 100) / 100;
-      const impuesto = Math.round((monto - sinImpuesto) * 100) / 100;
+      // ── PAYOUT A DESTINO NO MAPEADO (típicamente pago a proveedor)
+      // No registramos nada en Alegrant: el usuario carga manualmente la
+      // factura del proveedor y, si corresponde, el impuesto a débitos/créditos.
+      // Solo dejamos el rastro en mp_withdrawals (abajo) y un warning.
       const cbuTail = cbu.slice(-6);
-      const { data: gasto, error: gastoErr } = await supabase
-        .from("gastos")
-        .insert({
-          user_id: userId,
-          fecha: fechaYmd,
-          tipo: "gasto",
-          contacto_id: null,
-          concepto: "Impuesto debitos y creditos",
-          categoria: "Impuesto debitos y creditos",
-          concepto_id: CONCEPTO_ID_IMPUESTO_DEB_CRED,
-          subtotal: impuesto, iva: 0, iva_monto: 0,
-          total: impuesto, moneda: "ARS",
-          estado: "pagado", metodo_pago: "transferencia",
-          monto_pagado: impuesto,
-          notas: `0,6% sobre $${sinImpuesto.toLocaleString("es-AR")} transferido a CBU …${cbuTail} (payout MP ${pr.SOURCE_ID})`,
-          ctx_pais: "AR",
-          cuenta_id: cuentaMp.id,
-          tasa_cambio: 1,
-        })
-        .select("id").single();
-      if (gastoErr) warnings.push(`gasto impuesto: ${gastoErr.message}`);
-      else gastoId = Number(gasto.id);
-      warnings.push(`CBU …${cbuTail} no mapeada → asumido pago a proveedor (sólo se registró el impuesto $${impuesto}). Si era cuenta propia, agregá UPDATE cuentas SET cbu='${cbu}' WHERE nombre='...';`);
+      warnings.push(`CBU …${cbuTail} (payout MP ${pr.SOURCE_ID}, $${monto.toLocaleString("es-AR")}) no mapeada — sin asiento contable. Si era cuenta propia, agregá UPDATE cuentas SET cbu='${cbu}' WHERE nombre='...';`);
     }
 
     const fechaPayout = pr.DATE
