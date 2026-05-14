@@ -90,6 +90,17 @@ export default function CuentaDetailPage({
     });
   }, [ingresos, gastos, id]);
 
+  // Saldo acumulado después de CADA movimiento (orden cronológico asc)
+  const acumuladoPorMov = useMemo(() => {
+    const map = new Map<string, number>();
+    let acc = 0;
+    for (const m of movimientos) {
+      acc += m.tipo === "ingreso" ? m.monto : -m.monto;
+      map.set(`${m.tipo}-${m.id}`, acc);
+    }
+    return map;
+  }, [movimientos]);
+
   // Saldo acumulado al cierre de cada día con movimiento
   const balancePoints: BalancePoint[] = useMemo(() => {
     const map = new Map<string, number>(); // fecha → delta del día
@@ -289,20 +300,27 @@ export default function CuentaDetailPage({
                 <th>Método</th>
                 <th>Referencia</th>
                 <th className="text-right">Monto</th>
+                <th className="text-right">Acumulado</th>
               </tr>
             </thead>
             <tbody>
-              {[...movimientos].reverse().slice(0, 50).map((m) => (
-                <tr key={`${m.tipo}-${m.id}`}>
-                  <td className="whitespace-nowrap">{formatDate(m.fecha, country.locale)}</td>
-                  <td className="font-medium max-w-xs truncate">{m.concepto}</td>
-                  <td className="text-[var(--muted)]">{m.metodo ?? "—"}</td>
-                  <td className="text-[var(--muted)] font-mono text-xs">{m.referencia ?? "—"}</td>
-                  <td className={`text-right font-semibold whitespace-nowrap ${m.tipo === "ingreso" ? "text-emerald-400" : "text-red-500"}`}>
-                    {m.tipo === "ingreso" ? "+" : "−"}{formatMoney(m.monto, cuenta.moneda, country.locale)}
-                  </td>
-                </tr>
-              ))}
+              {[...movimientos].reverse().slice(0, 50).map((m) => {
+                const acumulado = acumuladoPorMov.get(`${m.tipo}-${m.id}`) ?? 0;
+                return (
+                  <tr key={`${m.tipo}-${m.id}`}>
+                    <td className="whitespace-nowrap">{formatDate(m.fecha, country.locale)}</td>
+                    <td className="font-medium max-w-xs truncate">{m.concepto}</td>
+                    <td className="text-[var(--muted)]">{m.metodo ?? "—"}</td>
+                    <td className="text-[var(--muted)] font-mono text-xs">{m.referencia ?? "—"}</td>
+                    <td className={`text-right font-semibold whitespace-nowrap ${m.tipo === "ingreso" ? "text-emerald-400" : "text-red-500"}`}>
+                      {m.tipo === "ingreso" ? "+" : "−"}{formatMoney(m.monto, cuenta.moneda, country.locale)}
+                    </td>
+                    <td className={`text-right font-medium whitespace-nowrap ${acumulado >= 0 ? "text-emerald-400/80" : "text-red-500/80"}`}>
+                      {formatMoney(acumulado, cuenta.moneda, country.locale)}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
