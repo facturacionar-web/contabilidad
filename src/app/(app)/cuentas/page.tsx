@@ -8,7 +8,8 @@ import { formatMoney } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
 import Modal from "@/components/Modal";
 import EmptyState from "@/components/EmptyState";
-import { Plus, Building2, Pencil, Trash2, Search, Loader2 } from "lucide-react";
+import Link from "next/link";
+import { Plus, Building2, Pencil, Trash2, Search, Loader2, ArrowRight } from "lucide-react";
 import EntityMeta from "@/components/EntityMeta";
 
 type FormState = {
@@ -166,19 +167,26 @@ export default function CuentasPage() {
           {(cuentas ?? []).map((c) => {
             const saldo = saldoCuenta(c.id, c.moneda);
             return (
-              <div key={c.id} className="card">
-                <div className="flex items-center gap-3 mb-3">
-                  <span className="text-2xl">{TIPO_ICONS[c.tipo]}</span>
-                  <div className="min-w-0">
-                    <p className="font-semibold truncate">{c.nombre}</p>
-                    <p className="text-xs text-[var(--muted)]">{TIPO_LABELS[c.tipo]} · {c.moneda}</p>
+              <Link
+                key={c.id}
+                href={`/cuentas/${c.id}`}
+                className="card group hover:border-[var(--primary)] hover:shadow-md transition-all cursor-pointer"
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="text-2xl">{TIPO_ICONS[c.tipo]}</span>
+                    <div className="min-w-0">
+                      <p className="font-semibold truncate">{c.nombre}</p>
+                      <p className="text-xs text-[var(--muted)]">{TIPO_LABELS[c.tipo]} · {c.moneda}</p>
+                    </div>
                   </div>
+                  <ArrowRight className="w-4 h-4 text-[var(--muted)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
                 </div>
                 <p className="text-xs text-[var(--muted)] mb-1">Saldo estimado</p>
-                <p className={`text-xl font-semibold ${saldo >= 0 ? "text-green-600" : "text-red-600"}`}>
+                <p className={`text-xl font-semibold ${saldo >= 0 ? "text-emerald-400" : "text-red-500"}`}>
                   {formatMoney(saldo, c.moneda, country.locale)}
                 </p>
-              </div>
+              </Link>
             );
           })}
         </div>
