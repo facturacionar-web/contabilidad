@@ -2,8 +2,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAccessToken } from "@/lib/ml/oauth";
 import {
   AR_TZ_OFFSET,
+  CONCEPTO_ID_IMPUESTO_DEB_CRED,
   CONCEPTO_ID_LIQUIDACION_MP,
   CONCEPTO_ID_TRANSFERENCIAS_PROPIAS,
+  IMPUESTO_DEB_CRED_RATE,
 } from "./config";
 import { parseAmount, parseReleaseCsv, type ReleaseRow } from "./csv-parser";
 import {
@@ -242,9 +244,6 @@ async function cerrarDiaMpForSeller(
       continue;
     }
     const cuentaDestino = await findCuentaPorCbu(supabase, userId, cbu);
-    if (!cuentaDestino) {
-      warnings.push(`CBU ${cbu} no mapeada. UPDATE cuentas SET cbu='${cbu}' WHERE nombre='...';`);
-    }
 
     const { data: detRow } = await supabase
       .from("mp_release_detail")
@@ -256,36 +255,38 @@ async function cerrarDiaMpForSeller(
       .eq("source_id", pr.SOURCE_ID || "")
       .maybeSingle();
 
-    const destinoLabel = cuentaDestino?.nombre ?? `CBU ${cbu.slice(-6)}`;
-    const { data: gasto, error: gastoErr } = await supabase
-      .from("gastos")
-      .insert({
-        user_id: userId,
-        fecha: fechaYmd,
-        tipo: "gasto",
-        contacto_id: null,
-        concepto: "Transferencias a cuentas propias",
-        categoria: "Transferencias a cuentas propias",
-        concepto_id: CONCEPTO_ID_TRANSFERENCIAS_PROPIAS,
-        subtotal: monto,
-        iva: 0,
-        iva_monto: 0,
-        total: monto,
-        moneda: "ARS",
-        estado: "pagado",
-        metodo_pago: "transferencia",
-        monto_pagado: monto,
-        notas: `${seller.cuentaNombre} → ${destinoLabel} (source_id ${pr.SOURCE_ID})`,
-        ctx_pais: "AR",
-        cuenta_id: cuentaMp.id,
-        tasa_cambio: 1,
-      })
-      .select("id")
-      .single();
-    if (gastoErr) warnings.push(`gasto payout: ${gastoErr.message}`);
-
+    let gastoId: number | null = null;
     let ingresoDestinoId: number | null = null;
+
     if (cuentaDestino) {
+      // ── PAYOUT A CUENTA PROPIA (transferencia entre cuentas)
+      // El usuario movió plata de MP a otra cuenta propia. El cron registra:
+      //   - Gasto en MP por el monto total
+      //   - Ingreso en cuenta destino por el monto total
+      const destinoLabel = cuentaDestino.nombre;
+      const { data: gasto, error: gastoErr } = await supabase
+        .from("gastos")
+        .insert({
+          user_id: userId,
+          fecha: fechaYmd,
+          tipo: "gasto",
+          contacto_id: null,
+          concepto: "Transferencias a cuentas propias",
+          categoria: "Transferencias a cuentas propias",
+          concepto_id: CONCEPTO_ID_TRANSFERENCIAS_PROPIAS,
+          subtotal: monto, iva: 0, iva_monto: 0,
+          total: monto, moneda: "ARS",
+          estado: "pagado", metodo_pago: "transferencia",
+          monto_pagado: monto,
+          notas: `${seller.cuentaNombre} → ${destinoLabel} (source_id ${pr.SOURCE_ID})`,
+          ctx_pais: "AR",
+          cuenta_id: cuentaMp.id,
+          tasa_cambio: 1,
+        })
+        .select("id").single();
+      if (gastoErr) warnings.push(`gasto transfer: ${gastoErr.message}`);
+      else gastoId = Number(gasto.id);
+
       const { data: ing, error: ingErr } = await supabase
         .from("ingresos")
         .insert({
@@ -295,8 +296,7 @@ async function cerrarDiaMpForSeller(
           concepto: "Transferencias a cuentas propias",
           categoria: "Transferencias a cuentas propias",
           concepto_id: CONCEPTO_ID_TRANSFERENCIAS_PROPIAS,
-          monto: monto,
-          moneda: "ARS",
+          monto: monto, moneda: "ARS",
           metodo_pago: "transferencia",
           referencia: `mp_payout:${pr.SOURCE_ID}`,
           notas: `${seller.cuentaNombre} → ${destinoLabel}`,
@@ -304,10 +304,40 @@ async function cerrarDiaMpForSeller(
           cuenta_id: cuentaDestino.id,
           tasa_cambio: 1,
         })
-        .select("id")
-        .single();
-      if (ingErr) warnings.push(`ingreso destino payout: ${ingErr.message}`);
+        .select("id").single();
+      if (ingErr) warnings.push(`ingreso destino transfer: ${ingErr.message}`);
       else ingresoDestinoId = Number(ing.id);
+    } else {
+      // ── PAYOUT A DESTINO EXTERNO (pago a proveedor, etc.)
+      // El monto debitado por MP = factura + impuesto a débitos/créditos.
+      // El usuario carga la factura manualmente; el cron solo registra el
+      // impuesto, así no se duplica el egreso.
+      const sinImpuesto = Math.round((monto / (1 + IMPUESTO_DEB_CRED_RATE)) * 100) / 100;
+      const impuesto = Math.round((monto - sinImpuesto) * 100) / 100;
+      const cbuTail = cbu.slice(-6);
+      const { data: gasto, error: gastoErr } = await supabase
+        .from("gastos")
+        .insert({
+          user_id: userId,
+          fecha: fechaYmd,
+          tipo: "gasto",
+          contacto_id: null,
+          concepto: "Impuesto debitos y creditos",
+          categoria: "Impuesto debitos y creditos",
+          concepto_id: CONCEPTO_ID_IMPUESTO_DEB_CRED,
+          subtotal: impuesto, iva: 0, iva_monto: 0,
+          total: impuesto, moneda: "ARS",
+          estado: "pagado", metodo_pago: "transferencia",
+          monto_pagado: impuesto,
+          notas: `0,6% sobre $${sinImpuesto.toLocaleString("es-AR")} transferido a CBU …${cbuTail} (payout MP ${pr.SOURCE_ID})`,
+          ctx_pais: "AR",
+          cuenta_id: cuentaMp.id,
+          tasa_cambio: 1,
+        })
+        .select("id").single();
+      if (gastoErr) warnings.push(`gasto impuesto: ${gastoErr.message}`);
+      else gastoId = Number(gasto.id);
+      warnings.push(`CBU …${cbuTail} no mapeada → asumido pago a proveedor (sólo se registró el impuesto $${impuesto}). Si era cuenta propia, agregá UPDATE cuentas SET cbu='${cbu}' WHERE nombre='...';`);
     }
 
     const fechaPayout = pr.DATE
@@ -325,7 +355,7 @@ async function cerrarDiaMpForSeller(
           mp_release_detail_id: detRow?.id ?? null,
           cuenta_origen_id: cuentaMp.id,
           cuenta_destino_id: cuentaDestino?.id ?? null,
-          alegrant_gasto_id: gasto?.id ?? null,
+          alegrant_gasto_id: gastoId,
           alegrant_ingreso_id: ingresoDestinoId,
         },
         { onConflict: "user_id,fecha,monto,cbu_destino" },
@@ -335,7 +365,7 @@ async function cerrarDiaMpForSeller(
     withdrawalsOut.push({
       monto, cbu,
       cuentaDestinoMatched: !!cuentaDestino,
-      gastoId: gasto?.id ?? null,
+      gastoId,
       ingresoId: ingresoDestinoId,
     });
   }
