@@ -4,6 +4,7 @@ import { useTable, paisFilter } from "@/lib/useSupabaseData";
 import { useConfig } from "@/lib/useConfig";
 import { CurrencyCode } from "@/lib/countries";
 import { formatMoney, todayISO } from "@/lib/format";
+import { CONCEPTO_ID_DIFERENCIA_TASA, getPagoPadreFromNotas } from "@/lib/concepts";
 import PageHeader from "@/components/PageHeader";
 import { Download, TrendingUp, TrendingDown, Wallet, Loader2 } from "lucide-react";
 import Link from "next/link";
@@ -104,7 +105,22 @@ export default function ReportesGastosPage() {
     type Row = { Tipo: string; Fecha: string; Concepto: string; Categoría: string; Contacto: string; Cuenta: string; Moneda: string; Monto: number; "Tipo de cambio": number; [k: string]: unknown; "Nro. comprobante": string };
     const rows: Row[] = [];
     ingresos.forEach(i => rows.push({ Tipo: "Ingreso", Fecha: i.fecha, Concepto: i.concepto ?? "", Categoría: i.categoria ?? "", Contacto: getContacto(i.contacto_id), Cuenta: getCuenta(i.cuenta_id), Moneda: i.moneda, Monto: Number(i.monto), "Tipo de cambio": Number(i.tasa_cambio || 1), [`Monto ${moneda}`]: toLocal(Number(i.monto), i.moneda, Number(i.tasa_cambio || 1), moneda), "Nro. comprobante": i.referencia ?? "" }));
+    // Mapa pago_padre_id → ARS adicional por gasto subordinado de "Diferencia
+    // de tasa de cambio". Esos gastos NO van como fila separada del reporte;
+    // se suman al `Monto ${moneda}` del pago padre para que cada pago aparezca
+    // como UNA línea con su costo real en ARS.
+    const diffByPadreId = new Map<number, number>();
     pagos.forEach(g => {
+      if (g.concepto_id !== CONCEPTO_ID_DIFERENCIA_TASA) return;
+      const padreId = getPagoPadreFromNotas(g.notas);
+      if (padreId == null) return;
+      diffByPadreId.set(padreId, (diffByPadreId.get(padreId) ?? 0) + Number(g.total));
+    });
+
+    pagos.forEach(g => {
+      // Saltar los subordinados — ya están fusionados al pago padre.
+      if (g.concepto_id === CONCEPTO_ID_DIFERENCIA_TASA && getPagoPadreFromNotas(g.notas) != null) return;
+
       const fps: { factura_id: number; numero_factura: string | null }[] = Array.isArray(g.factura_pagos) ? g.factura_pagos : [];
       const esPagoFactura = fps.length > 0;
       const conceptoText = esPagoFactura ? fps.map(fp => fp.numero_factura ?? `#${fp.factura_id}`).join(", ") : (Array.isArray(g.items) && g.items.length > 0 ? (g.items as { concepto_nombre?: string }[]).map(it => it.concepto_nombre).filter(Boolean).join(", ") : g.concepto ?? "");
@@ -114,7 +130,10 @@ export default function ReportesGastosPage() {
         for (const fp of fps) { const items = (facturaItemsMap[fp.factura_id] ?? []) as { concepto_nombre?: string }[]; for (const item of items) { if (item.concepto_nombre) uniqueConcepts.add(item.concepto_nombre); } }
         if (uniqueConcepts.size > 0) categoriaText = [...uniqueConcepts].join(", ");
       }
-      rows.push({ Tipo: esPagoFactura ? "Pago de factura" : "Pago sin factura", Fecha: g.fecha, Concepto: conceptoText, Categoría: categoriaText, Contacto: getContacto(g.contacto_id), Cuenta: getCuenta(g.cuenta_id), Moneda: g.moneda, Monto: -Number(g.total), "Tipo de cambio": Number(g.tasa_cambio || 1), [`Monto ${moneda}`]: -toLocal(Number(g.total), g.moneda, Number(g.tasa_cambio || 1), moneda), "Nro. comprobante": "" });
+      const diffAdicional = diffByPadreId.get(g.id) ?? 0;
+      const montoBase = -toLocal(Number(g.total), g.moneda, Number(g.tasa_cambio || 1), moneda) - diffAdicional;
+      const conceptoFinal = diffAdicional > 0 ? `${conceptoText} (incluye diferencia tasa)` : conceptoText;
+      rows.push({ Tipo: esPagoFactura ? "Pago de factura" : "Pago sin factura", Fecha: g.fecha, Concepto: conceptoFinal, Categoría: categoriaText, Contacto: getContacto(g.contacto_id), Cuenta: getCuenta(g.cuenta_id), Moneda: g.moneda, Monto: -Number(g.total), "Tipo de cambio": Number(g.tasa_cambio || 1), [`Monto ${moneda}`]: montoBase, "Nro. comprobante": "" });
     });
     notas.filter(n => n.tipo === "emitida").forEach(n => rows.push({ Tipo: "Nota cred. emitida", Fecha: n.fecha, Concepto: n.concepto ?? "", Categoría: n.motivo ?? "", Contacto: getContacto(n.contacto_id), Cuenta: "", Moneda: n.moneda, Monto: Number(n.monto), "Tipo de cambio": Number(n.tasa_cambio || 1), [`Monto ${moneda}`]: toLocal(Number(n.monto), n.moneda, Number(n.tasa_cambio || 1), moneda), "Nro. comprobante": n.numero ?? "" }));
     rows.sort((a, b) => a.Fecha.localeCompare(b.Fecha));
