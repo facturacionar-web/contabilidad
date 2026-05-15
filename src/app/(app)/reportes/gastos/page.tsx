@@ -6,9 +6,14 @@ import { CurrencyCode } from "@/lib/countries";
 import { formatMoney, todayISO } from "@/lib/format";
 import { CONCEPTO_ID_DIFERENCIA_TASA, getPagoPadreFromNotas } from "@/lib/concepts";
 import PageHeader from "@/components/PageHeader";
-import { Download, TrendingUp, TrendingDown, Wallet, Loader2 } from "lucide-react";
+import { Download, TrendingUp, TrendingDown, Wallet, Loader2, Receipt, Activity } from "lucide-react";
 import Link from "next/link";
 import * as XLSX from "xlsx";
+import DonutChart, { type DonutSlice } from "@/components/DonutChart";
+import AccountBalanceChart, { type BalancePoint } from "@/components/AccountBalanceChart";
+
+/** Paleta de colores para slices del donut (tableau-style). */
+const PALETTE = ["#ef4444", "#6366f1", "#10b981", "#f59e0b", "#0ea5e9", "#a855f7", "#f43f5e", "#14b8a6", "#84cc16", "#f97316"];
 
 function firstDayOfMonth() {
   const d = new Date();
@@ -46,6 +51,36 @@ export default function ReportesGastosPage() {
   const totalIngresos = useMemo(() => ingresos.reduce((s, i) => s + toLocal(Number(i.monto), i.moneda, Number(i.tasa_cambio || 1), moneda), 0), [ingresos, moneda]);
   const totalGastos   = useMemo(() => pagos.reduce((s, g) => s + toLocal(Number(g.total), g.moneda, Number(g.tasa_cambio || 1), moneda), 0), [pagos, moneda]);
   const balance = totalIngresos - totalGastos;
+
+  // KPIs adicionales — cantidad de pagos (excluyendo subordinados de diff
+  // tasa) y promedio diario de gastos del período.
+  const cantidadPagos = useMemo(
+    () => pagos.filter(g => !(g.concepto_id === CONCEPTO_ID_DIFERENCIA_TASA && getPagoPadreFromNotas(g.notas) != null)).length,
+    [pagos]
+  );
+  const diasPeriodo = useMemo(() => {
+    const a = new Date(desde + "T00:00:00");
+    const b = new Date(hasta + "T00:00:00");
+    return Math.max(1, Math.round((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+  }, [desde, hasta]);
+  const promedioDiario = totalGastos / diasPeriodo;
+
+  // Evolución diaria acumulada — para el line chart del período.
+  // saldo_acumulado(día) = sum(ingresos - gastos hasta ese día)
+  const balancePoints: BalancePoint[] = useMemo(() => {
+    const delta = new Map<string, number>();
+    for (const i of ingresos) {
+      const v = toLocal(Number(i.monto), i.moneda, Number(i.tasa_cambio || 1), moneda);
+      delta.set(i.fecha, (delta.get(i.fecha) ?? 0) + v);
+    }
+    for (const g of pagos) {
+      const v = toLocal(Number(g.total), g.moneda, Number(g.tasa_cambio || 1), moneda);
+      delta.set(g.fecha, (delta.get(g.fecha) ?? 0) - v);
+    }
+    const fechas = Array.from(delta.keys()).sort();
+    let acc = 0;
+    return fechas.map(f => { acc += delta.get(f) ?? 0; return { fecha: f, saldo: acc }; });
+  }, [ingresos, pagos, moneda]);
 
   const porCategoriaIngresos = useMemo(() => {
     const map: Record<string, number> = {};
@@ -162,15 +197,33 @@ export default function ReportesGastosPage() {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-            <KPICard label="Total ingresos" value={totalIngresos} moneda={moneda} locale={country.locale} icon={<TrendingUp className="w-5 h-5" />} color="text-green-600" bg="bg-green-50" />
-            <KPICard label="Total gastos"   value={totalGastos}   moneda={moneda} locale={country.locale} icon={<TrendingDown className="w-5 h-5" />} color="text-red-600"   bg="bg-red-50" />
-            <KPICard label="Balance" value={balance} moneda={moneda} locale={country.locale} icon={<Wallet className="w-5 h-5" />} color={balance >= 0 ? "text-teal-600" : "text-red-600"} bg={balance >= 0 ? "bg-teal-50" : "bg-red-50"} />
+          {/* KPIs */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
+            <KPICard label="Total ingresos" value={totalIngresos} moneda={moneda} locale={country.locale} icon={<TrendingUp className="w-5 h-5" />} color="text-emerald-400" bg="bg-emerald-500/10" />
+            <KPICard label="Total gastos"   value={totalGastos}   moneda={moneda} locale={country.locale} icon={<TrendingDown className="w-5 h-5" />} color="text-red-500" bg="bg-red-500/10" />
+            <KPICard label="Balance" value={balance} moneda={moneda} locale={country.locale} icon={<Wallet className="w-5 h-5" />} color={balance >= 0 ? "text-emerald-400" : "text-red-500"} bg={balance >= 0 ? "bg-emerald-500/10" : "bg-red-500/10"} />
+            <KPICard label="Pagos en periodo" value={cantidadPagos} moneda={moneda} locale={country.locale} icon={<Receipt className="w-5 h-5" />} color="text-indigo-400" bg="bg-indigo-500/10" isCount />
+            <KPICard label={`Gasto diario prom. (${diasPeriodo}d)`} value={promedioDiario} moneda={moneda} locale={country.locale} icon={<Activity className="w-5 h-5" />} color="text-amber-400" bg="bg-amber-500/10" />
           </div>
 
+          {/* Evolución del balance acumulado del período */}
+          <div className="card mb-6">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-sm">Evolución del balance del período</h3>
+              <span className="text-xs text-[var(--muted)]">acumulado día a día</span>
+            </div>
+            <AccountBalanceChart
+              points={balancePoints}
+              moneda={moneda}
+              locale={country.locale}
+              color={balance >= 0 ? "#10b981" : "#ef4444"}
+            />
+          </div>
+
+          {/* Donut "Gastos por concepto" + BarCard "Ingresos por categoría" lado a lado */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-            <BarCard title="Ingresos por categoría" rows={porCategoriaIngresos} max={maxIngCat} moneda={moneda} locale={country.locale} barClass="bg-green-500" />
-            <BarCard title="Gastos por concepto"    rows={porCategoriaGastos}  max={maxGastoCat} moneda={moneda} locale={country.locale} barClass="bg-red-500" />
+            <DonutCategoriaCard title="Gastos por concepto" rows={porCategoriaGastos} moneda={moneda} locale={country.locale} />
+            <BarCard title="Ingresos por categoría" rows={porCategoriaIngresos} max={maxIngCat} moneda={moneda} locale={country.locale} barClass="bg-emerald-500" />
           </div>
 
           <BarCard title="Top proveedores (por gasto)" rows={porProveedor.map(([n, v]) => [n, v])} hrefs={porProveedor.map(([, , id]) => id != null ? `/contactos/${id}` : undefined)} max={maxProv} moneda={moneda} locale={country.locale} barClass="bg-indigo-500" />
@@ -180,14 +233,51 @@ export default function ReportesGastosPage() {
   );
 }
 
-function KPICard({ label, value, moneda, locale, icon, color, bg }: { label: string; value: number; moneda: CurrencyCode; locale: string; icon: React.ReactNode; color: string; bg: string }) {
+function KPICard({ label, value, moneda, locale, icon, color, bg, isCount }: { label: string; value: number; moneda: CurrencyCode; locale: string; icon: React.ReactNode; color: string; bg: string; isCount?: boolean }) {
   return (
     <div className="card">
       <div className="flex items-center justify-between mb-3">
-        <span className="text-sm text-[var(--muted)]">{label}</span>
+        <span className="text-xs text-[var(--muted)]">{label}</span>
         <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${bg} ${color}`}>{icon}</span>
       </div>
-      <div className="text-2xl font-semibold">{formatMoney(value, moneda, locale)}</div>
+      <div className={`text-2xl font-semibold ${color}`}>{isCount ? value.toLocaleString(locale) : formatMoney(value, moneda, locale)}</div>
+    </div>
+  );
+}
+
+function DonutCategoriaCard({ title, rows, moneda, locale }: { title: string; rows: [string, number][]; moneda: CurrencyCode; locale: string }) {
+  const top = rows.slice(0, PALETTE.length);
+  const rest = rows.slice(PALETTE.length);
+  const slices: DonutSlice[] = top.map(([label, value], i) => ({ label, value, color: PALETTE[i] }));
+  if (rest.length > 0) {
+    const restSum = rest.reduce((s, [, v]) => s + v, 0);
+    if (restSum > 0) slices.push({ label: `Otros (${rest.length})`, value: restSum, color: "#64748b" });
+  }
+  const total = slices.reduce((s, x) => s + x.value, 0);
+  return (
+    <div className="card">
+      <h3 className="font-semibold mb-4">{title}</h3>
+      {slices.length === 0 || total === 0 ? (
+        <p className="text-sm text-[var(--muted)] py-4">Sin datos en el periodo seleccionado.</p>
+      ) : (
+        <div className="flex items-center gap-6 flex-wrap">
+          <DonutChart slices={slices} moneda={moneda} locale={locale} size={200} thickness={26} />
+          <ul className="flex-1 min-w-[180px] space-y-1.5 text-sm">
+            {slices.map((s, i) => (
+              <li key={i} className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-3 h-3 rounded-sm shrink-0" style={{ background: s.color }} />
+                  <span className="truncate">{s.label}</span>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="font-medium">{formatMoney(s.value, moneda, locale)}</div>
+                  <div className="text-[10px] text-[var(--muted)]">{((s.value / total) * 100).toFixed(1)}%</div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
