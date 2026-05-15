@@ -754,6 +754,17 @@ export default function PagosEgresosPage() {
         await updateRow("gastos", fp.factura_id, { monto_pagado: nuevo_pagado, estado: nuevo_estado });
       }
       await cascadeAnticiposBeforeDeleteGasto(g.id);
+      // Eliminar también el gasto subordinado de "Diferencia de tasa de
+      // cambio" si existe (vinculado por la marca [diff-tasa:pago-X]).
+      try {
+        await supabase
+          .from("gastos")
+          .delete()
+          .eq("concepto_id", CONCEPTO_ID_DIFERENCIA_TASA)
+          .like("notas", `[diff-tasa:pago-${g.id}]%`);
+      } catch (e) {
+        console.error("[diff-tasa] error eliminando gasto subordinado:", e);
+      }
       await deleteRow("gastos", g.id);
       await reload();
       // Sync eliminación (si tenía líneas directas)
