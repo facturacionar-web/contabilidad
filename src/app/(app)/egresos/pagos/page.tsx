@@ -280,6 +280,21 @@ export default function PagosEgresosPage() {
     typeof g.notas === "string" &&
     g.notas.startsWith("[diff-tasa:pago-");
 
+  /** Mapa pagoPadreId → monto en ARS de la diferencia de tasa cambio
+   * subordinada. Se construye parseando la marca en `notas` de los gastos
+   * auto. Usado para etiquetar el detalle del pago padre en el listado. */
+  const diferenciaTasaPorPagoId = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const g of (pagos ?? [])) {
+      if (g.concepto_id !== CONCEPTO_ID_DIFERENCIA_TASA) continue;
+      if (typeof g.notas !== "string") continue;
+      const m = g.notas.match(/^\[diff-tasa:pago-(\d+)\]/);
+      if (!m) continue;
+      map.set(Number(m[1]), Number(g.total));
+    }
+    return map;
+  }, [pagos]);
+
   const filteredRaw = useMemo(() => (pagos ?? []).filter(g => {
     if (isDiffSubordinado(g)) return false;
     if (search) {
@@ -828,6 +843,9 @@ export default function PagosEgresosPage() {
                         ? <span>{fps.map(fp => fp.numero_factura ?? `#${fp.factura_id}`).join(", ")}</span>
                         : <span className="text-[var(--muted)]">{g.concepto}</span>
                       }
+                      {diferenciaTasaPorPagoId.has(g.id) && (
+                        <span className="text-[var(--muted)]">, Diferencia de tasa de cambio</span>
+                      )}
                     </td>
                     <td className="text-[var(--muted)]">
                       {g.contacto_id

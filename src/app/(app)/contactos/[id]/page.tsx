@@ -142,6 +142,19 @@ export default function ContactoDashboardPage({
     [gastos, contactoId]
   );
 
+  // Pagos del proveedor que tienen una diferencia de tasa subordinada
+  // (para mostrar "..., Diferencia de tasa de cambio" en la columna detalle).
+  const pagosConDiferenciaTasa = useMemo(() => {
+    const set = new Set<number>();
+    for (const g of (gastos ?? [])) {
+      if (g.contacto_id !== contactoId) continue;
+      if (typeof g.notas !== "string") continue;
+      const m = g.notas.match(/^\[diff-tasa:pago-(\d+)\]/);
+      if (m) set.add(Number(m[1]));
+    }
+    return set;
+  }, [gastos, contactoId]);
+
   const notasRecibidas = useMemo(
     () =>
       (notas ?? []).filter(
@@ -608,6 +621,11 @@ export default function ContactoDashboardPage({
                         </div>
                       ) : (
                         <span className="text-[var(--muted)]">{g.concepto}</span>
+                      )}
+                      {pagosConDiferenciaTasa.has(g.id) && (
+                        <div className="text-xs text-[var(--muted)] mt-0.5">
+                          Diferencia de tasa de cambio
+                        </div>
                       )}
                     </td>
                     <td className="text-[var(--muted)]">{g.metodo_pago ?? "—"}</td>
