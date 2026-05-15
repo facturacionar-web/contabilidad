@@ -669,7 +669,10 @@ export default function PagosEgresosPage() {
             ctx_pais: pais,
             fecha: form.fecha,
             tipo: "gasto",
-            contacto_id: payload.contacto_id,
+            // Sin proveedor: la diferencia de tasa es un gasto financiero,
+            // no se imputa al proveedor del pago padre (sino apareceria
+            // inflandolo en Top Proveedores / Gastos por proveedor).
+            contacto_id: null,
             cuenta_id: payload.cuenta_id,
             concepto: "Diferencia de tasa de cambio",
             categoria: "Diferencia de tasa de cambio",
