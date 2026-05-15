@@ -128,10 +128,16 @@ export default function ContactoDashboardPage({
     [gastos, contactoId]
   );
 
+  // Pagos del proveedor: excluimos los gastos auto-generados como
+  // "Diferencia de tasa de cambio" subordinados a otro pago (marca en notas).
+  // Esos siguen en otras vistas (cuentas, dashboard, reportes) en ARS.
   const pagos = useMemo(
     () =>
       (gastos ?? []).filter(
-        (g) => g.contacto_id === contactoId && g.tipo === "gasto"
+        (g) =>
+          g.contacto_id === contactoId &&
+          g.tipo === "gasto" &&
+          !(typeof g.notas === "string" && g.notas.startsWith("[diff-tasa:pago-"))
       ),
     [gastos, contactoId]
   );

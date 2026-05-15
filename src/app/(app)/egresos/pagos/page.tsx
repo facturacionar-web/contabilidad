@@ -271,7 +271,17 @@ export default function PagosEgresosPage() {
 
   const hayFiltros = search || fechaDesde || fechaHasta || filtroProveedor !== "" || filtroCuenta;
 
+  /** Identifica los gastos generados automáticamente como "Diferencia de tasa
+   * de cambio" subordinados a un pago padre (marca en notas: [diff-tasa:pago-X]).
+   * Se ocultan de los listados de pagos para no duplicar visualmente, pero
+   * SÍ cuentan en cuentas/dashboard/reportes en ARS. */
+  const isDiffSubordinado = (g: Gasto) =>
+    g.concepto_id === CONCEPTO_ID_DIFERENCIA_TASA &&
+    typeof g.notas === "string" &&
+    g.notas.startsWith("[diff-tasa:pago-");
+
   const filteredRaw = useMemo(() => (pagos ?? []).filter(g => {
+    if (isDiffSubordinado(g)) return false;
     if (search) {
       const q = search.toLowerCase();
       const fps = g.factura_pagos ?? [];
