@@ -10,6 +10,7 @@ import { formatMoney, formatDate } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
 import EntityMeta from "@/components/EntityMeta";
 import { ArrowLeft, CreditCard, Receipt } from "lucide-react";
+import { CONCEPTO_ID_DIFERENCIA_TASA } from "@/lib/concepts";
 
 export default function PagoDetailPage({
   params,
@@ -23,6 +24,7 @@ export default function PagoDetailPage({
   const base = (config?.moneda_base ?? "ARS") as CurrencyCode;
 
   const [pago, setPago] = useState<Gasto | null | undefined>(undefined);
+  const [diferenciaTasa, setDiferenciaTasa] = useState<number>(0);
 
   useEffect(() => {
     if (!pais) return;
@@ -35,6 +37,17 @@ export default function PagoDetailPage({
       .then(({ data, error }) => {
         if (error || !data) setPago(null);
         else setPago(data as Gasto);
+      });
+    // Cargar gasto subordinado de diferencia de tasa (si existe).
+    supabase
+      .from("gastos")
+      .select("total")
+      .eq("concepto_id", CONCEPTO_ID_DIFERENCIA_TASA)
+      .like("notas", `[diff-tasa:pago-${pagoId}]%`)
+      .is("deleted_at", null)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) setDiferenciaTasa(Number(data.total) || 0);
       });
   }, [pagoId, pais]);
 
@@ -186,8 +199,8 @@ export default function PagoDetailPage({
           )}
           {isForeign && tasa > 1 && (
             <p className="text-xs text-amber-700 mt-1">
-              ≈ {formatMoney((esPagoFactura ? totalesFacturas.total : Number(pago.total)) * tasa, base, country.locale)}
-              {" "}(1 {pago.moneda} = {tasa} {base})
+              ≈ {formatMoney((esPagoFactura ? totalesFacturas.total : Number(pago.total)) * tasa + diferenciaTasa, base, country.locale)}
+              {" "}(1 {pago.moneda} = {tasa} {base}{diferenciaTasa > 0 ? ` + ${formatMoney(diferenciaTasa, base, country.locale)} dif. tasa` : ""})
             </p>
           )}
         </div>
@@ -287,13 +300,23 @@ export default function PagoDetailPage({
                   {formatMoney(totalesFacturas.total, pago.moneda, country.locale)}
                 </td>
               </tr>
+              {diferenciaTasa > 0 && (
+                <tr className="bg-amber-500/5">
+                  <td colSpan={7} className="px-5 py-2 text-right text-sm text-amber-600">
+                    Diferencia de tasa de cambio
+                  </td>
+                  <td className="px-5 py-2 text-right font-medium text-amber-600 whitespace-nowrap">
+                    + {formatMoney(diferenciaTasa, base, country.locale)}
+                  </td>
+                </tr>
+              )}
               {isForeign && tasa > 1 && (
                 <tr className="bg-amber-50">
                   <td colSpan={7} className="px-5 py-2 text-right text-sm text-amber-700">
                     Total {base} (1 {pago.moneda} = {tasa} {base})
                   </td>
                   <td className="px-5 py-2 text-right font-bold text-amber-700 whitespace-nowrap">
-                    {formatMoney(totalesFacturas.total * tasa, base, country.locale)}
+                    {formatMoney(totalesFacturas.total * tasa + diferenciaTasa, base, country.locale)}
                   </td>
                 </tr>
               )}
