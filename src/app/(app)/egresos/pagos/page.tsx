@@ -24,6 +24,15 @@ import MoneyInput from "@/components/MoneyInput";
 
 const TIPOS_RETENCION = ["Ganancias", "IIBB", "Otro"];
 
+/**
+ * Concepto del catálogo usado para la línea automática de "Diferencia de
+ * tasa de cambio" cuando el usuario paga una factura en moneda extranjera
+ * con una tasa MAYOR a la cargada en la factura. La línea se mantiene
+ * sincronizada por el useEffect — el usuario no la edita ni la borra.
+ */
+const CONCEPTO_ID_DIFERENCIA_TASA = "3cff7325-2203-4f06-b0e4-4fec39b59ec8";
+const isAutoDiffLine = (concepto_id: string) => concepto_id === CONCEPTO_ID_DIFERENCIA_TASA;
+
 // ── Local types ────────────────────────────────────────────────────────────
 type RetLocal = { key: string; tipo: string; monto: number };
 
@@ -202,6 +211,62 @@ export default function PagosEgresosPage() {
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.contacto_id, facturasPendientes.length]);
+
+  /**
+   * Mantiene la línea automática de "Diferencia de tasa de cambio".
+   *
+   * Cuando el usuario paga una factura en moneda extranjera con una tasa
+   * mayor a la cargada en la factura, el monto efectivo en moneda base
+   * resulta superior al deuda original. Esa diferencia se registra como
+   * una línea adicional en el pago, con concepto "Diferencia de tasa de
+   * cambio". Si la tasa de pago es igual o menor, la línea se quita.
+   *
+   * Cálculo (todo en moneda del pago):
+   *   diff_base = sum(fp.monto * (tasa_pago - tasa_factura))   [solo si tasa_pago > tasa_factura]
+   *   diff_pago = diff_base / tasa_pago                        [convertir ARS → moneda del pago]
+   */
+  useEffect(() => {
+    const tasaPago = Number(form.tasa_cambio || 1);
+    let diffBase = 0;
+    if (form.moneda !== base && tasaPago > 0) {
+      for (const fp of form.facturas_pagadas) {
+        if (fp.monto <= 0) continue;
+        const fact = (facturas ?? []).find((f) => f.id === fp.factura_id);
+        if (!fact) continue;
+        const tasaFactura = Number(fact.tasa_cambio || 1);
+        if (tasaPago > tasaFactura) {
+          diffBase += fp.monto * (tasaPago - tasaFactura);
+        }
+      }
+    }
+    const diffPago = tasaPago > 0 ? Math.round((diffBase / tasaPago) * 100) / 100 : 0;
+
+    const currentAuto = form.lineas_directas.find((l) => isAutoDiffLine(l.concepto_id));
+    const currentMonto = currentAuto?.monto ?? 0;
+    // Solo actualizar si cambió significativamente (evita loops infinitos).
+    if (Math.abs(currentMonto - diffPago) < 0.005 && (diffPago > 0) === !!currentAuto) return;
+
+    setForm((f) => {
+      const sinAuto = f.lineas_directas.filter((l) => !isAutoDiffLine(l.concepto_id));
+      if (diffPago <= 0.005) {
+        // No hay diferencia: dejar al menos una línea editable.
+        return {
+          ...f,
+          lineas_directas: sinAuto.length > 0
+            ? sinAuto
+            : [{ key: nextRKey(), concepto_id: "", monto: 0 }],
+        };
+      }
+      return {
+        ...f,
+        lineas_directas: [
+          ...sinAuto,
+          { key: currentAuto?.key ?? nextRKey(), concepto_id: CONCEPTO_ID_DIFERENCIA_TASA, monto: diffPago },
+        ],
+      };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.tasa_cambio, form.moneda, form.facturas_pagadas, facturas, base]);
 
   const hayFiltros = search || fechaDesde || fechaHasta || filtroProveedor !== "" || filtroCuenta;
 
@@ -922,33 +987,45 @@ export default function PagosEgresosPage() {
               <p className="text-xs text-[var(--muted)]">Montos no asociados a facturas pendientes</p>
             </div>
             <div className="divide-y divide-[var(--border)]">
-              {form.lineas_directas.map(l => (
-                <div key={l.key} className="flex items-center gap-3 px-4 py-2.5">
-                  <SearchableSelect
-                    size="sm"
-                    className="w-64"
-                    value={l.concepto_id}
-                    onChange={v => updateLinea(l.key, { concepto_id: v })}
-                    options={conceptos.map(c => ({ value: c.id, label: c.nombre }))}
-                    placeholder="— Concepto —"
-                    emptyLabel="— Sin concepto —"
-                  />
-                  <MoneyInput
-                    className="input w-36 text-sm py-1"
-                    placeholder="0,00"
-                    value={l.monto}
-                    onChange={(n) => updateLinea(l.key, { monto: n })}
-                  />
-                  <button
-                    type="button"
-                    className="text-[var(--muted)] hover:text-red-500 disabled:opacity-30"
-                    onClick={() => removeLinea(l.key)}
-                    disabled={form.lineas_directas.length === 1}
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
+              {form.lineas_directas.map(l => {
+                const auto = isAutoDiffLine(l.concepto_id);
+                return (
+                  <div key={l.key} className={`flex items-center gap-3 px-4 py-2.5 ${auto ? "bg-amber-500/5" : ""}`}>
+                    {auto ? (
+                      <div className="w-64 flex items-center gap-2">
+                        <span className="text-sm font-medium">Diferencia de tasa de cambio</span>
+                        <span className="text-[10px] font-medium bg-amber-500/20 text-amber-600 px-1.5 py-0.5 rounded">AUTO</span>
+                      </div>
+                    ) : (
+                      <SearchableSelect
+                        size="sm"
+                        className="w-64"
+                        value={l.concepto_id}
+                        onChange={v => updateLinea(l.key, { concepto_id: v })}
+                        options={conceptos.map(c => ({ value: c.id, label: c.nombre }))}
+                        placeholder="— Concepto —"
+                        emptyLabel="— Sin concepto —"
+                      />
+                    )}
+                    <MoneyInput
+                      className={`input w-36 text-sm py-1 ${auto ? "opacity-70 cursor-not-allowed" : ""}`}
+                      placeholder="0,00"
+                      value={l.monto}
+                      onChange={(n) => !auto && updateLinea(l.key, { monto: n })}
+                      disabled={auto}
+                    />
+                    <button
+                      type="button"
+                      className="text-[var(--muted)] hover:text-red-500 disabled:opacity-30"
+                      onClick={() => removeLinea(l.key)}
+                      disabled={auto || form.lineas_directas.length === 1}
+                      title={auto ? "Línea automática" : "Eliminar línea"}
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
             <div className="px-4 py-2 border-t border-[var(--border)] bg-slate-50/50">
               <button type="button" className="text-sm text-[var(--primary)] hover:underline flex items-center gap-1 font-medium" onClick={addLinea}>

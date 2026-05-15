@@ -195,20 +195,31 @@ export default function ContactoDashboardPage({
     return map;
   }, [aplicaciones]);
 
+  // "Por pagar" total expresado en moneda base. Las facturas en moneda
+  // distinta se convierten con su propia tasa_cambio (la que cargó el user
+  // al crear la factura — no la del día).
   const porPagar = facturas
-    .filter((f) => f.moneda === base && f.estado !== "pagado")
-    .reduce((s, f) => s + (Number(f.total) - Number(f.monto_pagado)), 0);
+    .filter((f) => f.estado !== "pagado")
+    .reduce((s, f) => {
+      const pendiente = Number(f.total) - Number(f.monto_pagado);
+      const tasa = f.moneda === base ? 1 : Number(f.tasa_cambio || 1);
+      return s + pendiente * tasa;
+    }, 0);
 
+  // "Notas crédito por aplicar" idem: convierto cada nota a moneda base.
   const notasPorAplicar = notasRecibidas
     .filter((n) => {
-      if (n.moneda !== base) return false;
       if (n.gasto_relacionado_id) return false;
       const aps = ((n as unknown as { factura_aplicaciones?: unknown[] }).factura_aplicaciones ?? []);
       if (aps.length > 0) return false;
       try { if (JSON.parse(n.motivo || "")?.ingreso_id) return false; } catch { /* ok */ }
       return true;
     })
-    .reduce((s, n) => s + Number(n.monto), 0);
+    .reduce((s, n) => {
+      const monto = Number(n.monto);
+      const tasa = n.moneda === base ? 1 : Number(n.tasa_cambio || 1);
+      return s + monto * tasa;
+    }, 0);
 
   // Monto bruto aplicado a la factura (incluye retenciones que van al gobierno).
   // Se usa para calcular "Por pagar" — porque desde el lado de la factura, las retenciones
