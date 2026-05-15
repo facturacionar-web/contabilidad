@@ -3,6 +3,8 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { formatMoney } from "@/lib/format";
+import { useConfig } from "@/lib/useConfig";
+import { SITE_ID_TO_COUNTRY } from "@/lib/ml/config";
 import PageHeader from "@/components/PageHeader";
 import { Loader2, ExternalLink, RefreshCw, CheckCircle2, AlertTriangle } from "lucide-react";
 
@@ -33,31 +35,47 @@ function nombreMes(yyyymm: string): string {
 }
 
 export default function ResumenMensualMlPage() {
+  const { config } = useConfig();
+  const pais = config?.pais;
   const [data, setData] = useState<ResumenMes[] | null>(null);
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [sync, setSync] = useState<SyncStatus>({ state: "idle" });
 
   const load = useCallback(async () => {
+    if (!pais) return;
     const supabase = createClient();
-    const [mlRes, sellersRes] = await Promise.all([
+    const [mlRes, sellersRes, oauthRes] = await Promise.all([
       supabase
         .from("ml_resumen_mensual_seller_v")
         .select("mes, ml_seller_id, seller_label, total_ml, cantidad"),
       supabase
         .from("ml_sellers_v")
         .select("seller_id, seller_label"),
+      // site_id por seller — filtramos al país del contexto actual.
+      supabase
+        .from("ml_oauth_cache")
+        .select("ml_user_id, site_id"),
     ]);
 
     if (mlRes.error) { setError(`ML: ${mlRes.error.message}`); return; }
     if (sellersRes.error) { setError(`Sellers: ${sellersRes.error.message}`); return; }
+    if (oauthRes.error) { setError(`OAuth: ${oauthRes.error.message}`); return; }
 
-    setSellers((sellersRes.data ?? []) as Seller[]);
+    // Sellers del país actual (lookup site_id → país).
+    const sellersDelPais = new Set<string>();
+    for (const row of (oauthRes.data ?? []) as { ml_user_id: number | string; site_id: string | null }[]) {
+      const country = row.site_id ? SITE_ID_TO_COUNTRY[row.site_id] : undefined;
+      if (country === pais) sellersDelPais.add(String(row.ml_user_id));
+    }
+
+    setSellers(((sellersRes.data ?? []) as Seller[]).filter(s => sellersDelPais.has(String(s.seller_id))));
 
     const byMes = new Map<string, ResumenMes>();
     for (const r of mlRes.data ?? []) {
       const row = r as { mes: string; ml_seller_id: number | string; total_ml: number | string | null; cantidad: number | null };
       const sellerId = String(row.ml_seller_id);
+      if (!sellersDelPais.has(sellerId)) continue;  // excluye sellers de otros países
       const monto = Number(row.total_ml ?? 0);
       const cant = Number(row.cantidad ?? 0);
       let acc = byMes.get(row.mes);
@@ -73,7 +91,7 @@ export default function ResumenMensualMlPage() {
 
     const sorted = [...byMes.values()].sort((a, b) => b.mes.localeCompare(a.mes));
     setData(sorted);
-  }, []);
+  }, [pais]);
 
   useEffect(() => {
     load();
