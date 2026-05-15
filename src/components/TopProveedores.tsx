@@ -32,30 +32,22 @@ export default function TopProveedores({
   const inRange = (iso: string) =>
     (!startDate || iso >= startDate) && (!endDate || iso <= endDate);
 
-  // Mapa: pago_padre_id → ARS de diferencia de tasa subordinada (solo dentro
-  // del rango). El gasto subordinado NO tiene contacto_id, así que lo
-  // sumamos manualmente al proveedor del pago padre para reflejar el costo
-  // real (factura USD convertida + diferencia cambiaria).
-  const diffByPadreId = new Map<number, number>();
-  for (const g of pagos) {
-    if (g.concepto_id !== CONCEPTO_ID_DIFERENCIA_TASA) continue;
-    if (!inRange(g.fecha)) continue;
-    const padreId = getPagoPadreFromNotas(g.notas);
-    if (padreId == null) continue;
-    diffByPadreId.set(padreId, (diffByPadreId.get(padreId) ?? 0) + Number(g.total));
-  }
-
-  // Acumular por contacto_id en moneda base
+  // Acumular por contacto_id en moneda base. Los gastos subordinados de
+  // "Diferencia de tasa de cambio" ya tienen el mismo contacto_id que su
+  // pago padre, así que se suman naturalmente acá (no necesitan cross-ref).
+  // El conteo de "pagos" excluye los subordinados para no inflar el N.
   const acc = new Map<number, { total: number; count: number }>();
   for (const p of pagos) {
     if (!p.contacto_id) continue;
     if (!inRange(p.fecha)) continue;
+    const esSubordinado =
+      p.concepto_id === CONCEPTO_ID_DIFERENCIA_TASA &&
+      getPagoPadreFromNotas(p.notas) != null;
     const tasa = Number(p.tasa_cambio || 1);
-    const totalPago = Number(p.total) * (p.moneda === monedaBase ? 1 : tasa);
-    const totalConDiff = totalPago + (diffByPadreId.get(p.id) ?? 0);
+    const total = Number(p.total) * (p.moneda === monedaBase ? 1 : tasa);
     const cur = acc.get(p.contacto_id) ?? { total: 0, count: 0 };
-    cur.total += totalConDiff;
-    cur.count += 1;
+    cur.total += total;
+    if (!esSubordinado) cur.count += 1;
     acc.set(p.contacto_id, cur);
   }
 
