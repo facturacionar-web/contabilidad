@@ -54,7 +54,7 @@ export default function ConciliacionMlPage() {
   const load = useCallback(async () => {
     const supabase = createClient();
 
-    const [arcaRes, mlSellerRes, sellersRes] = await Promise.all([
+    const [arcaRes, mlSellerRes, sellersRes, oauthRes] = await Promise.all([
       supabase
         .from("arca_resumen_mensual_v")
         .select("mes, facturas, notas_debito, notas_credito, cantidad"),
@@ -64,13 +64,26 @@ export default function ConciliacionMlPage() {
       supabase
         .from("ml_sellers_v")
         .select("seller_id, seller_label"),
+      // site_id por seller — ARCA es solo Argentina (MLA), excluimos CL/MX/etc.
+      supabase
+        .from("ml_oauth_cache")
+        .select("ml_user_id, site_id"),
     ]);
 
     if (arcaRes.error) { setError(`ARCA: ${arcaRes.error.message}`); return; }
     if (mlSellerRes.error) { setError(`ML: ${mlSellerRes.error.message}`); return; }
     if (sellersRes.error) { setError(`Sellers: ${sellersRes.error.message}`); return; }
+    if (oauthRes.error) { setError(`OAuth: ${oauthRes.error.message}`); return; }
 
-    setSellers((sellersRes.data ?? []) as Seller[]);
+    // Filtrar a solo sellers de Argentina (site_id=MLA). ARCA es AFIP AR,
+    // entonces Chile/México/etc no aplican a esta conciliación.
+    const sellersAR = new Set<string>();
+    for (const row of (oauthRes.data ?? []) as { ml_user_id: number | string; site_id: string | null }[]) {
+      if (row.site_id === "MLA") sellersAR.add(String(row.ml_user_id));
+    }
+
+    const sellersFiltrados = ((sellersRes.data ?? []) as Seller[]).filter(s => sellersAR.has(String(s.seller_id)));
+    setSellers(sellersFiltrados);
 
     // ARCA: total por mes
     const arcaByMes = new Map<string, { totalArca: number; cantArca: number }>();
@@ -84,11 +97,12 @@ export default function ConciliacionMlPage() {
       });
     }
 
-    // ML: por mes y seller
+    // ML: por mes y seller (filtrado a sellers AR — ARCA es solo Argentina)
     const mlByMes = new Map<string, { totalMl: number; porSeller: Record<string, number>; cantMlPorSeller: Record<string, number> }>();
     for (const r of mlSellerRes.data ?? []) {
       const row = r as { mes: string; ml_seller_id: number | string; total_ml: number | string | null; cantidad: number | null };
       const sellerId = String(row.ml_seller_id);
+      if (!sellersAR.has(sellerId)) continue;  // excluir CL/MX/otros
       const monto = Number(row.total_ml ?? 0);
       const cant = Number(row.cantidad ?? 0);
       let acc = mlByMes.get(row.mes);
