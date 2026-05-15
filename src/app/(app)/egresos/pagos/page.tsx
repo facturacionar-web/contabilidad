@@ -218,12 +218,14 @@ export default function PagosEgresosPage() {
    * Cuando el usuario paga una factura en moneda extranjera con una tasa
    * mayor a la cargada en la factura, el monto efectivo en moneda base
    * resulta superior al deuda original. Esa diferencia se registra como
-   * una línea adicional en el pago, con concepto "Diferencia de tasa de
-   * cambio". Si la tasa de pago es igual o menor, la línea se quita.
+   * una línea con concepto "Diferencia de tasa de cambio", expresada en
+   * moneda BASE (ARS) — no en la moneda del pago. Al guardar, se separa
+   * en un gasto independiente para que el pago original siga reflejando
+   * solo el monto de la factura en su moneda nativa.
    *
-   * Cálculo (todo en moneda del pago):
-   *   diff_base = sum(fp.monto * (tasa_pago - tasa_factura))   [solo si tasa_pago > tasa_factura]
-   *   diff_pago = diff_base / tasa_pago                        [convertir ARS → moneda del pago]
+   * Cálculo:
+   *   diff_base_ars = sum(fp.monto_USD * (tasa_pago - tasa_factura))
+   *                   [solo si tasa_pago > tasa_factura]
    */
   useEffect(() => {
     const tasaPago = Number(form.tasa_cambio || 1);
@@ -239,17 +241,16 @@ export default function PagosEgresosPage() {
         }
       }
     }
-    const diffPago = tasaPago > 0 ? Math.round((diffBase / tasaPago) * 100) / 100 : 0;
+    diffBase = Math.round(diffBase * 100) / 100;
 
     const currentAuto = form.lineas_directas.find((l) => isAutoDiffLine(l.concepto_id));
     const currentMonto = currentAuto?.monto ?? 0;
     // Solo actualizar si cambió significativamente (evita loops infinitos).
-    if (Math.abs(currentMonto - diffPago) < 0.005 && (diffPago > 0) === !!currentAuto) return;
+    if (Math.abs(currentMonto - diffBase) < 0.005 && (diffBase > 0) === !!currentAuto) return;
 
     setForm((f) => {
       const sinAuto = f.lineas_directas.filter((l) => !isAutoDiffLine(l.concepto_id));
-      if (diffPago <= 0.005) {
-        // No hay diferencia: dejar al menos una línea editable.
+      if (diffBase <= 0.005) {
         return {
           ...f,
           lineas_directas: sinAuto.length > 0
@@ -261,7 +262,7 @@ export default function PagosEgresosPage() {
         ...f,
         lineas_directas: [
           ...sinAuto,
-          { key: currentAuto?.key ?? nextRKey(), concepto_id: CONCEPTO_ID_DIFERENCIA_TASA, monto: diffPago },
+          { key: currentAuto?.key ?? nextRKey(), concepto_id: CONCEPTO_ID_DIFERENCIA_TASA, monto: diffBase },
         ],
       };
     });
@@ -322,9 +323,22 @@ export default function PagosEgresosPage() {
   const totals = useMemo(() => {
     const aplicadoFacturas = form.facturas_pagadas.reduce((s, fp) => s + fp.monto, 0);
     const retenciones = form.facturas_pagadas.reduce((s, fp) => s + fp.retenciones.reduce((sr, r) => sr + r.monto, 0), 0);
-    const aplicadoLineas = form.lineas_directas.reduce((s, l) => s + l.monto, 0);
+    // Las líneas con concepto "Diferencia de tasa de cambio" están en moneda
+    // BASE (ARS) — se separan en un gasto independiente al guardar, así que
+    // no suman al neto del pago en su moneda nativa.
+    const aplicadoLineas = form.lineas_directas
+      .filter((l) => !isAutoDiffLine(l.concepto_id))
+      .reduce((s, l) => s + l.monto, 0);
+    const diferenciaTasaBase = form.lineas_directas
+      .filter((l) => isAutoDiffLine(l.concepto_id))
+      .reduce((s, l) => s + l.monto, 0);
     const neto = aplicadoFacturas - retenciones + aplicadoLineas;
-    return { aplicadoFacturas, retenciones, aplicadoLineas, neto, neto_base: neto * (form.tasa_cambio || 1) };
+    return {
+      aplicadoFacturas, retenciones, aplicadoLineas,
+      diferenciaTasaBase,
+      neto,
+      neto_base: neto * (form.tasa_cambio || 1) + diferenciaTasaBase,
+    };
   }, [form]);
 
   function openNew(proveedorId?: number, facturaId?: number) {
@@ -506,7 +520,11 @@ export default function PagosEgresosPage() {
         retenciones: fp.retenciones.map(r => ({ tipo: r.tipo, monto: r.monto }) as Retencion),
       }));
 
-      const lineasActivas = form.lineas_directas.filter(l => l.monto > 0);
+      // Líneas activas SIN la línea auto de diferencia (esa se separa en
+      // un gasto independiente en ARS al final del save).
+      const lineasActivasAll = form.lineas_directas.filter(l => l.monto > 0);
+      const lineasActivas = lineasActivasAll.filter(l => !isAutoDiffLine(l.concepto_id));
+      const lineaDiferenciaTasa = lineasActivasAll.find(l => isAutoDiffLine(l.concepto_id));
       const lineaNombres = lineasActivas.map(l => conceptos.find(c => c.id === l.concepto_id)?.nombre ?? "Varios");
       const primerConceptoId = lineasActivas[0] ? (lineasActivas[0].concepto_id || null) : null;
       const concepto = fpData.length > 0 && lineasActivas.length === 0
@@ -605,6 +623,45 @@ export default function PagosEgresosPage() {
           monto_pagado: Math.min(nuevo_pagado, total_factura),
           estado: nuevo_estado,
         });
+      }
+
+      // ── Gasto separado por "Diferencia de tasa de cambio" (en ARS) ──
+      // Si hay línea auto en el form, generamos un gasto independiente en
+      // moneda base, vinculado al pago por una marca única en `notas`. En
+      // edit, reemplazamos el anterior si existía (búsqueda por marca).
+      try {
+        const marcaPago = `[diff-tasa:pago-${pagoId}]`;
+        if (editing) {
+          const sb = createClient();
+          // RLS filtra automáticamente por user_id.
+          await sb.from("gastos")
+            .delete()
+            .eq("concepto_id", CONCEPTO_ID_DIFERENCIA_TASA)
+            .like("notas", `%${marcaPago}%`);
+        }
+        if (lineaDiferenciaTasa && lineaDiferenciaTasa.monto > 0.005) {
+          await insertRow("gastos", {
+            ctx_pais: pais,
+            fecha: form.fecha,
+            tipo: "gasto",
+            contacto_id: payload.contacto_id,
+            cuenta_id: payload.cuenta_id,
+            concepto: "Diferencia de tasa de cambio",
+            categoria: "Diferencia de tasa de cambio",
+            concepto_id: CONCEPTO_ID_DIFERENCIA_TASA,
+            subtotal: lineaDiferenciaTasa.monto,
+            iva: 0, iva_monto: 0,
+            total: lineaDiferenciaTasa.monto,
+            moneda: base,
+            tasa_cambio: 1,
+            estado: "pagado",
+            metodo_pago: form.metodo_pago || null,
+            monto_pagado: lineaDiferenciaTasa.monto,
+            notas: `${marcaPago} Diferencia generada por pago #${pagoId} en ${form.moneda} (tasa ${form.tasa_cambio})`,
+          });
+        }
+      } catch (e) {
+        console.error("[diff-tasa] error gestionando gasto separado:", e);
       }
 
       saveLastTasa(form.moneda, form.tasa_cambio);
@@ -1014,6 +1071,9 @@ export default function PagosEgresosPage() {
                       onChange={(n) => !auto && updateLinea(l.key, { monto: n })}
                       disabled={auto}
                     />
+                    {auto && (
+                      <span className="text-xs text-amber-600 font-medium">{base}</span>
+                    )}
                     <button
                       type="button"
                       className="text-[var(--muted)] hover:text-red-500 disabled:opacity-30"
@@ -1070,19 +1130,27 @@ export default function PagosEgresosPage() {
                     )}
                   </>
                 )}
-                {form.lineas_directas.filter(l => l.monto > 0).map(l => (
-                  <div key={l.key} className="flex justify-between">
-                    <span className="text-[var(--muted)]">{conceptos.find(c => c.id === l.concepto_id)?.nombre ?? "Varios"}</span>
-                    <span>{formatMoney(l.monto, form.moneda, country.locale)}</span>
-                  </div>
-                ))}
+                {form.lineas_directas.filter(l => l.monto > 0).map(l => {
+                  const auto = isAutoDiffLine(l.concepto_id);
+                  // Las líneas auto están en moneda BASE (ARS), no en la moneda del pago.
+                  const monedaLinea = auto ? base : form.moneda;
+                  return (
+                    <div key={l.key} className="flex justify-between">
+                      <span className="text-[var(--muted)] flex items-center gap-1.5">
+                        {conceptos.find(c => c.id === l.concepto_id)?.nombre ?? "Varios"}
+                        {auto && <span className="text-[9px] font-medium bg-amber-500/20 text-amber-600 px-1 py-0.5 rounded">AUTO</span>}
+                      </span>
+                      <span>{formatMoney(l.monto, monedaLinea, country.locale)}</span>
+                    </div>
+                  );
+                })}
                 <div className="flex justify-between pt-1 border-t border-[var(--border)]">
                   <span className="font-semibold">Total {form.moneda}</span>
                   <span className="font-bold text-base text-red-600">{formatMoney(totals.neto, form.moneda, country.locale)}</span>
                 </div>
                 {isForeign && form.tasa_cambio > 0 && (
                   <div className="flex justify-between text-amber-700 bg-amber-50 -mx-2 px-2 py-1 rounded">
-                    <span className="font-semibold">Total {base}</span>
+                    <span className="font-semibold">Total {base} {totals.diferenciaTasaBase > 0 ? "(con dif. tasa)" : ""}</span>
                     <span className="font-bold">{formatMoney(totals.neto_base, base, country.locale)}</span>
                   </div>
                 )}
