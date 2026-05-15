@@ -7,6 +7,7 @@ import { formatMoney, todayISO } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
+import { CONCEPTO_ID_DIFERENCIA_TASA, getPagoPadreFromNotas } from "@/lib/concepts";
 
 function firstDayOfMonth() {
   const d = new Date();
@@ -63,6 +64,12 @@ export default function LibroDiarioPage() {
         result.push({ codigo: `FP-${g.id}`, fecha: g.fecha, tercero, contacto_id: g.contacto_id ?? null, lines });
 
       } else if (g.tipo === "gasto") {
+        // Saltar el gasto subordinado de "Diferencia de tasa de cambio": el
+        // libro-diario ya calcula esa diferencia en el asiento del pago padre
+        // (líneas exchangeLoss/exchangeGain abajo). Incluirlo otra vez como
+        // gasto independiente sería double counting.
+        if (g.concepto_id === CONCEPTO_ID_DIFERENCIA_TASA && getPagoPadreFromNotas(g.notas) != null) continue;
+
         const fps = (g.factura_pagos ?? []) as { factura_id: number; monto: number; retenciones?: { tipo: string; monto: number }[] }[];
         const lines: AsientoLine[] = [];
 
